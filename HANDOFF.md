@@ -1,7 +1,7 @@
 # HANDOFF：创作模式（Creator Mode）实施提示词
 
 > 用途：如果你想在 DSH 的创作模式会话里继续完善/重写本插件，新开一个创作模式会话，把下面整段提示词粘贴进去即可。
-> 本仓库已包含 M0–M4 的全部产出：设计文档、调研笔记、host 半边、聚合引擎、client 产物、价目表与测试（37/37 全绿）。
+> 本仓库已包含 M0–M4 的全部产出：设计文档、调研笔记、host 半边、聚合引擎、client 产物、价目表与测试（80/80 全绿）。
 
 ---
 
@@ -23,7 +23,7 @@
 **当前状态：**
 - host 半边：`src/host.js` + `src/core/*`（回填/磁盘缓存/实时事件/6 条 `/token-tally-api/*` 路由/loopback 守卫）——已在本机真实会话库冒烟通过（101 会话/4 秒）
 - client 半边：`src/client/*` → 构建产物 `lib/client.js`（单文件 `window.__ModuleLoader__.load` 工厂）——五页签 UI + 手写 SVG 图表已实现
-- 测试：`npm test` 37/37 全绿；构建：`npm run build`
+- 测试：`npm test` 80/80 全绿；构建：`npm run build`
 
 **请帮我做：**
 1. 把插件安装到我的 web profile 并重启 `dsh web`，确认「设置 → Token 台账」页签出现且数据正常渲染；
