@@ -1,0 +1,81 @@
+{
+  "name": "dsh-token-tally",
+  "version": "0.1.0",
+  "description": "Token 台账 — DeepSeek Harness (DSH) 用量与费用看板插件：模型×时间堆叠柱、折线趋势、环形分布、调用排行五页签消耗视图 + 多模型对比表 + 53 周热力图，本地聚合会话 Token 与预估费用，零第三方运行时依赖。/ Token & cost dashboard plugin for DeepSeek Harness: model-by-time stacked bars, trend lines, donut charts, rankings, a model comparison table and a 53-week heatmap — aggregated locally, zero third-party runtime deps.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "token",
+    "tokens",
+    "token-usage",
+    "usage",
+    "usage-dashboard",
+    "cost",
+    "cost-dashboard",
+    "cost-tracking",
+    "llm-usage",
+    "model-comparison",
+    "analytics",
+    "dashboard",
+    "heatmap",
+    "billing",
+    "statistics",
+    "newapi",
+    "cc-switch",
+    "local-first",
+    "privacy"
+  ],
+  "homepage": "https://github.com/BioAIEvolu/dsh-token-tally#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BioAIEvolu/dsh-token-tally.git"
+  },
+  "bugs": "https://github.com/BioAIEvolu/dsh-token-tally/issues",
+  "author": "BioAIEvolu",
+  "license": "MIT",
+  "icon": "icon.svg",
+  "type": "module",
+  "main": "./lib/host.js",
+  "exports": {
+    ".": "./lib/host.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "pricing",
+    "docs",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "INSTALL.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.2.0-rc.2 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": ["@deepseek-ai/dsh-client-runtime"],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0 || ^19"
+  },
+  "devDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-test-renderer": "^18.3.1"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test",
+    "test:isolated": "node --test --test-isolation=none"
+  }
+}

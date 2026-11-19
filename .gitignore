@@ -1,0 +1,16 @@
+# dependencies & build
+node_modules/
+out/
+artifacts/
+
+# logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# local env & secrets
+.env
+.env.*
+*.pem
+*.key
+.npmrc

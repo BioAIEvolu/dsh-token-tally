@@ -1,0 +1,4 @@
+# cordis patch：仅插入一行，不改官方任何行（M4 安装前需对照真实已装插件样例复核字段拼写）
+- insert:
+    - id: token-tally
+      name: dsh-token-tally

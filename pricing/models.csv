@@ -1,0 +1,12 @@
+# dsh-token-tally 价目表（示例口径：人民币元 / 百万 token，四档分开计价）
+# 列：provider,model,currency,input,output,cacheRead,cacheWrite
+# 说明：
+# - input = 缓存未命中输入价；cacheRead = 缓存命中读价；cacheWrite = 缓存写入价
+# - model 会被归一化（小写、剥 provider 前缀、剥日期后缀与 :batch 变体），命中必须精确
+# - provider 可为 *（通用价），同模型指定 provider 时覆盖通用价
+# - 未匹配的模型不计费（UI 显示「未配置价格」）——请自行核对你所用模型的官方价目
+# - 峰谷计价为 v1.1 规划，当前按单一价计
+# 以下为示例行（发布前请核对官方定价页），不确认请删除并留空表：
+deepseek,deepseek-flash,CNY,1,4,0.2,2
+deepseek,deepseek-v4-pro,CNY,4.5,13.5,0.15,0
+*,glm-5.1,USD,1.4,4.4,0.26,4.4
