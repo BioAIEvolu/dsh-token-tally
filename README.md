@@ -110,7 +110,7 @@ dsh web   # 重启生效
 
 本项目代码**全部原创**，以 MIT 发布。
 
-- **new-api（AGPL-3.0）**：仅概念级参考其数据模型与交互布局，零代码复制、零源码引入；
+- **[new-api](https://github.com/QuantumNous/new-api)（AGPL-3.0）**：仅概念级参考其数据看板的数据模型与交互布局，零代码复制、零源码引入；
 - **dsh-usage-dashboard（Apache-2.0）**：rollup/磁盘缓存思路参考；
 - **model-usage-plugin（MIT）**：计费规则参考；
 - **cc-switch（MIT）**：信息架构参考。
