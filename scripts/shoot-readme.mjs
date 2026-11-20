@@ -26,6 +26,10 @@ const shots = [
 for (const [src, dest] of shots) {
   await page.goto('file:///' + path.join(shotsDir, src).replace(/\\/g, '/'));
   await page.waitForTimeout(300);
+  // 视口高度自适应内容，避免 fullPage 截出大片空白
+  const h = await page.evaluate(() => Math.ceil(document.body.scrollHeight));
+  await page.setViewportSize({ width: 1280, height: Math.max(360, Math.min(h, 1100)) });
+  await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(imgDir, dest), fullPage: true });
   const kb = Math.round(fs.statSync(path.join(imgDir, dest)).size / 1024);
   console.log('shot', dest, kb + 'KB');
