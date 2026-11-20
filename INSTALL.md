@@ -2,7 +2,7 @@
 
 ## 前置
 
-- DSH（web profile）≥ 0.2.0-rc.2：`dsh web` 能正常启动；
+- DSH（web profile）≥ 0.2.2-rc.5（声明下限 = 实测验证版本）：`dsh web` 能正常启动；
 - Node ≥ 18 仅本地开发需要——npm 包已自带构建产物（`lib/`），直接安装即可使用。
 
 ## 安装

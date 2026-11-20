@@ -2,6 +2,13 @@
 
 本项目的所有重要变更将记录在此文件中。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.1.2] - 2026-11-20
+
+### 修复
+
+- **DSH 内核兼容声明确实化**：`engines.dsh` 下限由 `0.2.0-rc.2` 收紧为 `>=0.2.2-rc.5 <0.3.0-0`。此前声明的 rc.2 / rc.3 / rc.4 从未在真实内核上验证；现在声明的下限与实际验证基线（`0.2.2-rc.5`）一致。
+- COMPATIBILITY.md 版本矩阵改为只把 `0.2.2-rc.5` 标为已验证，INSTALL.md 同步。
+
 ## [0.1.1] - 2026-11-20
 
 ### 新增
