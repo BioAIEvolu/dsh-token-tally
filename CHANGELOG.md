@@ -2,6 +2,14 @@
 
 本项目的所有重要变更将记录在此文件中。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-11-20
+
+### 新增
+
+- README 功能预览：5 张由插件真实渲染代码生成的展示图（演示数据）——主视图（堆叠柱+热力图）、调用趋势、环形占比、调用排行、模型对比表；
+- `docs/images` 随 npm 包分发，npm 页面同步展示截图；
+- 新增 `scripts/make-readme-shots.mjs` / `shoot-readme.mjs` / `verify-readme-shots.mjs`：截图可复现（`node scripts/make-readme-shots.mjs && node scripts/shoot-readme.mjs`）。
+
 ## [0.1.0] - 2026-11-20
 
 ### 新增

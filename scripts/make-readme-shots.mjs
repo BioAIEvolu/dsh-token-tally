@@ -1,0 +1,165 @@
+// 生成 README 功能展示页（演示数据，全部虚构）：node scripts/make-readme-shots.mjs
+// 用插件真实的 charts.js + 真实 CSS 渲染，保证截图与真实 UI 一致；不含任何真实会话数据。
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stackedBars, trendLines, donut, rankingBars, calendarHeatmap, compareTable } from '../src/client/charts.js';
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// 从 src/client/index.js 安全求值 CSS 字符串常量（仅字符串拼接，无副作用）
+const src = fs.readFileSync(path.join(root, 'src/client/index.js'), 'utf8');
+const expr = (name) => {
+  const line = src.split('\n').find((l) => l.trimStart().startsWith('const ' + name + ' ='));
+  return new Function('return ' + line.trim().slice(('const ' + name + ' =').length).replace(/;\s*$/, ''))();
+};
+const CSS = expr('CSS');
+const OVR = expr('CSS_OVERRIDES');
+
+const FREEZE = '*,:before,:after{animation-duration:0s!important;animation-delay:0s!important;transition:none!important}';
+
+// ---------- 演示数据（确定性伪随机，全部虚构） ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry32(20261120);
+const TZ = 8 * 3600;
+const NOW = Math.floor(Date.UTC(2026, 10, 20, 4, 0, 0) / 1000); // 2026-11-20 12:00 +08
+const DAY = 86400;
+
+const MODELS = [
+  { provider: 'deepseek', model: 'deepseek-v4-pro', calls: 5200, tokAvg: 5200, price: 13.5, speed: 41.2, p50: 1450, p95: 6800, hit: 0.87, cov: 1 },
+  { provider: 'anthropic', model: 'claude-opus-4-5-thinking', calls: 3100, tokAvg: 9800, price: 210, speed: 58.6, p50: 2300, p95: 11400, hit: 0.74, cov: 0.98 },
+  { provider: 'moonshot', model: 'kimi-k2-thinking', calls: 2500, tokAvg: 7400, price: 39, speed: 47.3, p50: 1780, p95: 8200, hit: 0.81, cov: 1 },
+  { provider: 'zai', model: 'glm-5.3', calls: 1900, tokAvg: 4300, price: 8, speed: 88.9, p50: 920, p95: 4100, hit: 0.9, cov: 1 },
+  { provider: 'google', model: 'gemini-2.5-pro', calls: 1200, tokAvg: 8600, price: 84, speed: 63.4, p50: 1650, p95: 7600, hit: 0.79, cov: 0.96 },
+  { provider: 'openai', model: 'gpt-5.2-codex', calls: 640, tokAvg: 11200, price: 120, speed: 72.1, p50: 2100, p95: 9800, hit: 0.68, cov: 0.92 },
+  { provider: 'byted', model: 'doubao-seed-1-6-thinking', calls: 310, tokAvg: 5100, price: 16, speed: 66.8, p50: 1280, p95: 5600, hit: 0.83, cov: 1 },
+  { provider: 'xai', model: 'grok-4-fast', calls: 96, tokAvg: 3600, price: 12, speed: 121.5, p50: 640, p95: 2800, hit: 0.55, cov: 0.88 },
+];
+
+function weekdayFactor(dayIdx) { const d = (dayIdx + 3) % 7; return d >= 5 ? 0.42 : 1; }
+
+// 30 天逐日桶（消耗分布 / 调用趋势）
+const stacks = [];
+for (let i = 29; i >= 0; i--) {
+  const start = Math.floor((NOW - i * DAY + TZ) / DAY) * DAY - TZ; // 当地日界
+  const di = 29 - i;
+  const cells = [];
+  for (const m of MODELS) {
+    if (m.calls < 200 && rnd() < 0.45) continue; // 小模型部分日子缺席
+    const calls = Math.max(1, Math.round((m.calls / 30) * weekdayFactor(di) * (0.65 + rnd() * 0.8)));
+    const tokens = Math.round(calls * m.tokAvg * (0.8 + rnd() * 0.5));
+    const cost = (tokens / 1e6) * m.price;
+    cells.push({ provider: m.provider, model: m.model, count: calls, tokens, cost, priced: true });
+  }
+  stacks.push({ start, gran: 'day', cells });
+}
+
+// 汇总
+const agg = new Map();
+for (const b of stacks) for (const c of b.cells) {
+  const a = agg.get(c.model) || { provider: c.provider, model: c.model, calls: 0, ok: 0, failed: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cost: 0, priced: true };
+  a.calls += c.count; a.ok += Math.round(c.count * 0.985); a.failed += c.count - Math.round(c.count * 0.985);
+  a.totalTokens += c.tokens; a.inputTokens += Math.round(c.tokens * 0.78); a.outputTokens += Math.round(c.tokens * 0.22);
+  a.cacheReadTokens += Math.round(c.tokens * 0.41); a.cost += c.cost;
+  agg.set(c.model, a);
+}
+const all = [...agg.values()];
+for (const m of MODELS) { const a = agg.get(m.model); a.currency = 'CNY'; a.costPerMillionTokens = (a.cost / a.totalTokens) * 1e6; a.speedTokensPerSec = m.speed; a.p50 = m.p50; a.p95 = m.p95; a.cacheHitRate = m.hit; a.cacheCoverage = m.cov; }
+
+const donutItems = all.map((a) => ({ provider: a.provider, model: a.model, calls: a.calls, tokens: a.totalTokens, cost: a.cost, priced: true }));
+const rankingRows = all.map((a) => ({ provider: a.provider, model: a.model, calls: a.calls, totalTokens: a.totalTokens, cost: a.cost, priced: true }));
+const compareRows = [...all].sort((a, b) => b.cost - a.cost);
+
+// 53 周热力图：12 个月日 token（确定性波动 + 周末低谷 + 少量空白）
+const days = [];
+for (let i = 370; i >= 0; i--) {
+  const day = Math.floor((NOW - i * DAY + TZ) / DAY) * DAY - TZ;
+  const di = 370 - i;
+  const wave = 0.55 + 0.45 * Math.sin(di / 9) + 0.25 * Math.sin(di / 3.1);
+  const growth = 0.35 + 0.65 * (di / 370);
+  let tokens = 9e6 * wave * growth * weekdayFactor(di) * (0.6 + rnd() * 0.9);
+  if (rnd() < 0.05) tokens = 0;
+  if (di === 0) tokens = 6.2e6;
+  days.push({ day, tokens: Math.max(0, Math.round(tokens)) });
+}
+
+// ---------- UI 壳（类名与 ui.js 一致） ----------
+const TABS = [['消耗分布', 'stacks'], ['调用趋势', 'trend'], ['调用次数分布', 'donut'], ['调用次数排行', 'rank'], ['模型对比', 'compare']];
+const tabsHtml = (active) => '<div class="mca-tabs" role="tablist">' + TABS.map(([label, key]) =>
+  '<button role="tab" class="mca-tab' + (key === active ? ' on' : '') + '">' + label + '</button>').join('') + '</div>';
+
+const seg = (pairs, onKey, sm) => '<div class="mca-seg' + (sm ? ' mca-seg-sm' : '') + '">' +
+  pairs.map(([label, key]) => '<button class="mca-seg-btn' + (key === onKey ? ' on' : '') + '">' + label + '</button>').join('') + '</div>';
+const filtersHtml = (rangeOn, granOn) => '<div class="mca-filters"><div class="mca-toolbar-main">' +
+  seg([['今天', 'today'], ['24H', '24h'], ['7D', '7d'], ['30D', '30d'], ['90D', '90d']], rangeOn) +
+  (granOn ? seg([['小时', 'hour'], ['天', 'day'], ['月', 'month']], granOn, true) : '') +
+  '<details class="mca-drop"><summary class="mca-drop-btn">筛选<span class="mca-count">2</span></summary></details>' +
+  '</div><div class="mca-toolbar-side"><button class="mca-settings-btn">费用设置</button></div></div>';
+
+const kpiHtml = '<div class="mca-kpis">' + [
+  ['预估费用', '¥ 1,284.60', ''],
+  ['会话数', '312', ''],
+  ['用量请求', '14,946', ''],
+  ['计费 Tokens', '68.42M', ''],
+  ['缓存命中率', '81.4%', '遥测覆盖 98.6%'],
+].map(([l, v, s]) => '<div class="mca-kpi"><div class="mca-kpi-label">' + l + '</div><div class="mca-kpi-value">' + v + '</div>' + (s ? '<div class="mca-kpi-sub">' + s + '</div>' : '') + '</div>').join('') + '</div>';
+
+const card = (title, sub, tools, body) => '<div class="mca-card"><div class="mca-card-head"><div class="mca-card-title-wrap"><span class="mca-card-title">' + title + '</span>' + (sub ? '<span class="mca-card-sub">' + sub + '</span>' : '') + '</div><div class="mca-card-tools">' + tools + '</div></div>' + body + '</div>';
+const pills = (on) => seg([['Token', 'tokens'], ['费用', 'cost'], ['次数', 'count']], on, true);
+const RANGE_LABEL = '最近 30 天';
+
+const page = (title, inner, width) => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>
+:root{--dsw-alias-bg-layer-1:#16181d;--dsw-alias-bg-layer-2:#1f232b;--dsw-alias-label-primary:#e8eaf0;--dsw-alias-label-secondary:#9aa2b1;--dsw-alias-border-l1:#2a2f3a;--dsw-alias-state-error-primary:#e5484d}
+body{background:#0d0f13;color:#e8eaf0;font-family:system-ui,'Segoe UI','Microsoft YaHei',sans-serif;margin:0;padding:18px 20px 24px;width:${width}px;box-sizing:border-box}
+${CSS}
+${OVR}
+${FREEZE}
+.dsh-window-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#9aa2b1;font-size:12px}
+.dsh-window-bar .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+</style></head><body class="mca-root">${inner}</body></html>`;
+
+const outDir = path.join(root, 'out', 'shots');
+fs.mkdirSync(outDir, { recursive: true });
+const write = (name, html) => { fs.writeFileSync(path.join(outDir, name), html); console.log('written', name); };
+
+// ① 消耗分布（主视图 hero）
+write('hero.html', page('消耗分布',
+  '<div class="dsh-window-bar"><span class="dot" style="background:#e5484d"></span><span class="dot" style="background:#f5a623"></span><span class="dot" style="background:#46d976"></span><span style="margin-left:10px">DeepSeek Harness — 设置 → Token 台账</span></div>'
+  + tabsHtml('stacks') + filtersHtml('30d', 'day') + kpiHtml
+  + card('模型消耗分布', RANGE_LABEL, pills('tokens'), stackedBars(stacks, { metric: 'tokens', tz: TZ, currency: 'CNY' }))
+  + card('用量热力图', '最近 12 个月', '', calendarHeatmap(days, { tz: TZ, now: NOW })),
+  1240));
+
+// ② 调用趋势
+write('trend.html', page('调用趋势',
+  tabsHtml('trend') + filtersHtml('30d', 'day')
+  + card('调用趋势', RANGE_LABEL, pills('count'), trendLines(stacks, { metric: 'count', tz: TZ, currency: 'CNY' })),
+  1240));
+
+// ③ 调用次数分布（环形）+ 排行
+write('donut.html', page('调用次数分布',
+  tabsHtml('donut') + filtersHtml('30d', null)
+  + card('模型调用次数占比', '点击扇区可筛选', pills('tokens'), donut(donutItems, { metric: 'tokens', tz: TZ, currency: 'CNY' })),
+  1240));
+
+// ④ 调用次数排行
+write('rank.html', page('调用次数排行',
+  tabsHtml('rank') + filtersHtml('30d', null)
+  + card('模型调用排行', '总计 ' + all.reduce((s, m) => s + m.calls, 0).toLocaleString() + ' 次请求', pills('count'), rankingBars(rankingRows, { metric: 'count', tz: TZ, currency: 'CNY' })),
+  1240));
+
+// ⑤ 模型对比表
+write('compare.html', page('模型对比',
+  tabsHtml('compare') + filtersHtml('30d', null)
+  + card('模型对比', '点击行可筛选全看板', '', compareTable(compareRows, { tz: TZ, currency: 'CNY', sortKey: 'cost', sortDir: 'desc' })),
+  1240));
+
+console.log('all pages written to', outDir);
