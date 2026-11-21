@@ -2,6 +2,12 @@
 
 本项目的所有重要变更将记录在此文件中。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.1.3] - 2026-11-21
+
+### 修复
+
+- **README 徽章同步内核基线**：DSH 徽章由模糊的 `0.2.x` 改为 `0.2.2-rc.5`，与 v0.1.2 收紧后的 `engines.dsh` 一致（徽章是 GitHub 与 npm 页面上最先被看到的兼容声明）。
+
 ## [0.1.2] - 2026-11-20
 
 ### 修复

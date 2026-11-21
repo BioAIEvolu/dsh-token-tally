@@ -12,7 +12,7 @@
 [![GitHub forks](https://img.shields.io/github/forks/BioAIEvolu/dsh-token-tally?style=social)](https://github.com/BioAIEvolu/dsh-token-tally/network/members)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.x-blue)](https://github.com/deepseek-ai/deepseek-harness)
+[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-0.2.2--rc.5-blue)](https://github.com/deepseek-ai/deepseek-harness)
 
 如果这个项目帮到了你，请考虑 ⭐ **Star** 支持一下，让更多人发现它！
 
