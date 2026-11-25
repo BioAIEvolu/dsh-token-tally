@@ -515,6 +515,9 @@ export function calendarHeatmap(days, opts = {}) {
   const W2 = X0 + cols * (CS + GAP) + 28;
   const H2 = Y0 + 7 * (CS + GAP) + 34;
   let cells = '';
+  // 入场动画挂在整组上（单次 fade-in）：53×7≈376 个格子若逐格动画，每个入场帧都要
+  // 对整张宽幅 SVG 重算样式并整体重绘，与同屏的堆叠柱/环形图入场竞争主线程，
+  // 表现为环形图扫描卡顿。整组一次动画把每帧样式重算从 376 个元素降到 1 个。
   for (let i = 0; i < daysInRange; i++) {
     const day = startDay + i * DAY;
     const col = Math.floor(i / 7); const row = i % 7;
@@ -522,7 +525,7 @@ export function calendarHeatmap(days, opts = {}) {
     let lv = 0;
     for (let k = HEAT_LEVELS.length - 1; k >= 0; k--) if (tokens >= HEAT_LEVELS[k]) { lv = k + 1; break; }
     const x = X0 + col * (CS + GAP); const y = Y0 + row * (CS + GAP);
-    cells += '<rect x="' + x + '" y="' + y + '" width="' + CS + '" height="' + CS + '" rx="2" tabindex="0" class="mca-h' + lv + ' ' + animClass('heat', col) + '"><title>' + esc(fmtFullDay(day, tz)) + ': ' + esc(fmtTokens(tokens)) + ' tokens</title></rect>';
+    cells += '<rect x="' + x + '" y="' + y + '" width="' + CS + '" height="' + CS + '" rx="2" tabindex="0" class="mca-h' + lv + '"><title>' + esc(fmtFullDay(day, tz)) + ': ' + esc(fmtTokens(tokens)) + ' tokens</title></rect>';
   }
   // 行标签：完整星期名称，确保每一行的日期位置可读。
   let rowLabels = '';
@@ -545,7 +548,7 @@ export function calendarHeatmap(days, opts = {}) {
   }
   // 图例贴住网格左下角、与首列单元格对齐，视觉上属于图表本体，而不是浮在右下角。
   return '<svg viewBox="0 0 ' + W2 + ' ' + H2 + '" class="mca-svg" role="img">' +
-    '<g>' + months + '</g>' + rowLabels + cells +
+    '<g>' + months + '</g>' + rowLabels + '<g class="mca-heat-entrance">' + cells + '</g>' +
     '<g class="mca-heat-legend" transform="translate(' + X0 + ' ' + (H2 - 20) + ')">' +
     '<text x="0" y="10" class="mca-heat-legend-label">少</text>' +
     [0, 1, 2, 3, 4].map((i) => '<rect x="' + (22 + i * (CS + GAP)) + '" y="0" width="' + CS + '" height="' + CS + '" rx="2" class="mca-h' + i + '"/>').join('') +

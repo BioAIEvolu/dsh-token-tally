@@ -337,7 +337,8 @@ test('calendarHeatmap：历史日期网格与层级配色 + 月标签与星期�
   const firstLabel = /class="mca-heat-day-label">([^<]+)</.exec(svg);
   assert.equal(firstLabel && firstLabel[1], '周一', 'first row is Monday (CN convention)');
   assert.ok(svg.includes('mca-heat-legend-label'), 'legend labels use dedicated layout');
-  assert.ok(svg.includes('mca-anim-heat'), 'heatmap cells animate in');
+  assert.ok(svg.includes('mca-heat-entrance'), 'heatmap fades in as one group (376 per-cell animations would starve the donut sweep)');
+  assert.ok(!svg.includes('mca-anim-heat'), 'no per-cell heat animations');
   assert.ok(/>\d{1,2}月</.test(svg), 'renders month labels');       // 顶部月标签
   assert.ok(svg.includes('>周日<') && svg.includes('>周一<') && svg.includes('>周三<') && svg.includes('>周六<'), 'renders weekday labels');
 });
