@@ -32,7 +32,7 @@ DSH **web profile bundle**：host 半边（Cordis 服务 + 只读 JSON 路由）
 
 - 延迟用**固定对数分桶直方图**（100ms → 600s 按 ×1.5 步进分桶）而非存样本，保证聚合体积恒定、跨时间窗可合并求分位；
 - 速度不落桶存储，查询时按 `outputTokens / genMsSum` 现算；
-- 统计范围：仅普通会话（`delegationDepth > 0` 或含 `parentSession` 的子代理会话不计入）；
+- 统计范围：主会话与子代理/委派会话默认均纳入；每份日志独立折叠，`delegationDepth > 0` 或 `parentSession` 用于识别继承关系并跳过继承前缀，避免双计；
 - 事件驱动刷新：`session/event` 增量写入；60s reconcile 发现新增/移除会话。
 
 ### 1.3 计费（估算，非账单）
@@ -49,7 +49,7 @@ DSH **web profile bundle**：host 半边（Cordis 服务 + 只读 JSON 路由）
 | M0 | 插件规范调研 + 会话数据形态调研（并行子代理） | ✅ 完成（docs/plugin-spec-notes.md、docs/data-format-notes.md） |
 | M1 | 纯逻辑核心：pricing 归一 + rollup 引擎（含时长/延迟直方图聚合）+ 单测（不依赖 DSH 运行时） | ✅ 完成 |
 | M2 | host 半边：服务注册 + 只读路由 + loopback 守卫 | ✅ 完成（真实库冒烟：101 会话/4s） |
-| M3 | client 半边：五页签（含模型对比表）+ 热力图 + KPI + 筛选（手写 SVG） | ✅ 完成 |
+| M3 | client 半边：六页签（含模型对比/多维排行/会话明细）+ 热力图 + KPI + 筛选（手写 SVG） | ✅ 完成 |
 | M4 | 打包 + 冒烟验证 | ✅ 完成 |
 | M5 | 发布材料：npm 查重、LICENSE、安装指引 | ✅ 完成（v0.1.0 公开发布） |
 

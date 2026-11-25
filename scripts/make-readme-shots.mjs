@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stackedBars, trendLines, donut, rankingBars, calendarHeatmap, compareTable } from '../src/client/charts.js';
+import { stackedBars, trendLines, donut, rankingBars, calendarHeatmap, activityTrend, compareTable } from '../src/client/charts.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -56,7 +56,8 @@ for (let i = 29; i >= 0; i--) {
     const calls = Math.max(1, Math.round((m.calls / 30) * weekdayFactor(di) * (0.65 + rnd() * 0.8)));
     const tokens = Math.round(calls * m.tokAvg * (0.8 + rnd() * 0.5));
     const cost = (tokens / 1e6) * m.price;
-    cells.push({ provider: m.provider, model: m.model, count: calls, tokens, cost, priced: true });
+    const cacheHitRate = (di + m.model.length) % 17 === 0 ? null : Math.max(0.35, Math.min(0.98, m.hit + ((di % 5) - 2) * 0.012));
+    cells.push({ provider: m.provider, model: m.model, count: calls, tokens, cost, priced: true, cacheHitRate });
   }
   stacks.push({ start, gran: 'day', cells });
 }
@@ -91,7 +92,7 @@ for (let i = 370; i >= 0; i--) {
 }
 
 // ---------- UI 壳（类名与 ui.js 一致） ----------
-const TABS = [['消耗分布', 'stacks'], ['调用趋势', 'trend'], ['调用次数分布', 'donut'], ['调用次数排行', 'rank'], ['模型对比', 'compare']];
+const TABS = [['消耗分布', 'stacks'], ['调用趋势', 'trend'], ['调用次数分布', 'dist'], ['调用次数排行', 'rank'], ['模型对比', 'compare'], ['会话明细', 'sessions']];
 const tabsHtml = (active) => '<div class="mca-tabs" role="tablist">' + TABS.map(([label, key]) =>
   '<button role="tab" class="mca-tab' + (key === active ? ' on' : '') + '">' + label + '</button>').join('') + '</div>';
 
@@ -105,17 +106,21 @@ const filtersHtml = (rangeOn, granOn) => '<div class="mca-filters"><div class="m
 
 const kpiHtml = '<div class="mca-kpis">' + [
   ['预估费用', '¥ 1,284.60', ''],
-  ['会话数', '312', ''],
-  ['用量请求', '14,946', ''],
   ['计费 Tokens', '68.42M', ''],
+  ['输入 Tokens', '41.26M', ''],
+  ['输出 Tokens', '8.74M', ''],
+  ['缓存 Tokens', '18.42M', '读 17.96M · 写 0.46M'],
   ['缓存命中率', '81.4%', '遥测覆盖 98.6%'],
+  ['用量请求', '14,946', ''],
+  ['会话数', '312', ''],
 ].map(([l, v, s]) => '<div class="mca-kpi"><div class="mca-kpi-label">' + l + '</div><div class="mca-kpi-value">' + v + '</div>' + (s ? '<div class="mca-kpi-sub">' + s + '</div>' : '') + '</div>').join('') + '</div>';
 
 const card = (title, sub, tools, body) => '<div class="mca-card"><div class="mca-card-head"><div class="mca-card-title-wrap"><span class="mca-card-title">' + title + '</span>' + (sub ? '<span class="mca-card-sub">' + sub + '</span>' : '') + '</div><div class="mca-card-tools">' + tools + '</div></div>' + body + '</div>';
 const pills = (on) => seg([['Token', 'tokens'], ['费用', 'cost'], ['次数', 'count']], on, true);
+const trendPills = (on) => seg([['Token', 'tokens'], ['费用', 'cost'], ['次数', 'count'], ['缓存', 'cache']], on, true);
 const RANGE_LABEL = '最近 30 天';
 
-const page = (title, inner, width) => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+const page = (title, inner, width, rootClass = '', rootStyle = '') => `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
 <style>
 :root{--dsw-alias-bg-layer-1:#16181d;--dsw-alias-bg-layer-2:#1f232b;--dsw-alias-label-primary:#e8eaf0;--dsw-alias-label-secondary:#9aa2b1;--dsw-alias-border-l1:#2a2f3a;--dsw-alias-state-error-primary:#e5484d}
 body{background:#0d0f13;color:#e8eaf0;font-family:system-ui,'Segoe UI','Microsoft YaHei',sans-serif;margin:0;padding:18px 20px 24px;width:${width}px;box-sizing:border-box}
@@ -124,7 +129,7 @@ ${OVR}
 ${FREEZE}
 .dsh-window-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#9aa2b1;font-size:12px}
 .dsh-window-bar .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-</style></head><body class="mca-root">${inner}</body></html>`;
+</style></head><body class="mca-root ${rootClass}" style="${rootStyle}">${inner}</body></html>`;
 
 const outDir = path.join(root, 'out', 'shots');
 fs.mkdirSync(outDir, { recursive: true });
@@ -135,31 +140,57 @@ write('hero.html', page('消耗分布',
   '<div class="dsh-window-bar"><span class="dot" style="background:#e5484d"></span><span class="dot" style="background:#f5a623"></span><span class="dot" style="background:#46d976"></span><span style="margin-left:10px">DeepSeek Harness — 设置 → Token 台账</span></div>'
   + tabsHtml('stacks') + filtersHtml('30d', 'day') + kpiHtml
   + card('模型消耗分布', RANGE_LABEL, pills('tokens'), stackedBars(stacks, { metric: 'tokens', tz: TZ, currency: 'CNY' }))
-  + card('用量热力图', '最近 12 个月', '', calendarHeatmap(days, { tz: TZ, now: NOW })),
+  + card('用量活动', '连续活跃 12 天 · 最高单日 18.6M（11-06） · 近 7 日 +18.6%', seg([['日', 'daily'], ['周', 'week'], ['累计', 'cumulative']], 'daily', true), calendarHeatmap(days, { tz: TZ, now: NOW })),
   1240));
 
 // ② 调用趋势
 write('trend.html', page('调用趋势',
   tabsHtml('trend') + filtersHtml('30d', 'day')
-  + card('调用趋势', RANGE_LABEL, pills('count'), trendLines(stacks, { metric: 'count', tz: TZ, currency: 'CNY' })),
+  + card('调用趋势', RANGE_LABEL, trendPills('count'), trendLines(stacks, { metric: 'count', tz: TZ, currency: 'CNY' })),
+  1240));
+
+// ②b 缓存命中率趋势（折线连续衔接，圆点只标实测）
+write('cache.html', page('缓存命中率趋势',
+  tabsHtml('trend') + filtersHtml('30d', 'day')
+  + card('调用趋势', RANGE_LABEL + ' · 缓存命中率 · 折线含插值，圆点为实测', trendPills('cache'), trendLines(stacks, { metric: 'cache', tz: TZ, currency: 'CNY' })),
   1240));
 
 // ③ 调用次数分布（环形）+ 排行
 write('donut.html', page('调用次数分布',
-  tabsHtml('donut') + filtersHtml('30d', null)
+  tabsHtml('dist') + filtersHtml('30d', null)
   + card('模型调用次数占比', '点击扇区可筛选', pills('tokens'), donut(donutItems, { metric: 'tokens', tz: TZ, currency: 'CNY' })),
   1240));
 
 // ④ 调用次数排行
 write('rank.html', page('调用次数排行',
   tabsHtml('rank') + filtersHtml('30d', null)
-  + card('模型调用排行', '总计 ' + all.reduce((s, m) => s + m.calls, 0).toLocaleString() + ' 次请求', pills('count'), rankingBars(rankingRows, { metric: 'count', tz: TZ, currency: 'CNY' })),
+  + card('模型调用排行', '总计 ' + all.reduce((s, m) => s + m.calls, 0).toLocaleString() + ' 次请求', seg([['模型', 'model'], ['供应商', 'provider'], ['项目', 'project']], 'model', true) + pills('count'), rankingBars(rankingRows, { metric: 'count', tz: TZ, currency: 'CNY' })),
   1240));
 
 // ⑤ 模型对比表
 write('compare.html', page('模型对比',
   tabsHtml('compare') + filtersHtml('30d', null)
-  + card('模型对比', '点击行可筛选全看板', '', compareTable(compareRows, { tz: TZ, currency: 'CNY', sortKey: 'cost', sortDir: 'desc' })),
-  1240));
+  + '<div class="mca-body">' + card('模型对比', '点击行可筛选全看板', '', '<div class="mca-unsafe mca-compare-scroll">' + compareTable(compareRows, { tz: TZ, currency: 'CNY', sortKey: 'cost', sortDir: 'desc' }) + '</div>') + '</div>',
+  1240, 'mca-compare-page', 'height:calc(100vh - 36px)'));
+
+// ⑥ 会话明细：独立日志行 + 工作区 + 精确 usage 汇总（全部虚构）
+const sessionDemo = [
+  ['a83f21c9', 'D:/work/token-tally', 'deepseek / moonshot', 842, '18.6M', '86.2%', '¥286.40', '11-20 11:00'],
+  ['b67e09a1', 'D:/work/agent-tools', 'anthropic', 516, '12.4M', '74.8%', '¥2,604.00', '11-20 10:00'],
+  ['c48d77e2', 'D:/work/data-pipeline', 'openai / google', 388, '9.8M', '71.5%', '¥1,024.60', '11-20 09:00'],
+  ['d92a10f4', 'D:/work/research-notes', 'zai / deepseek', 264, '7.2M', '89.1%', '¥92.80', '11-19 22:00'],
+  ['e15b63c8', 'D:/work/web-frontend', 'byted / xai', 126, '3.6M', '68.4%', '¥58.20', '11-19 20:00'],
+  ['f70c42d5', 'D:/work/model-evals', 'moonshot / deepseek', 94, '2.1M', '82.7%', '¥76.50', '11-19 18:00'],
+];
+const sessionRows = sessionDemo.map(([id, workspace, providers, requests, tokens, hit, cost, active]) => '<tr>'
+  + '<td class="mca-session-id" title="演示会话 ' + id + '">' + id + '</td>'
+  + '<td><span class="mca-ellipsis">' + workspace + '</span></td>'
+  + '<td><span class="mca-ellipsis">' + providers + '</span></td>'
+  + '<td class="num">' + requests + '</td><td class="num">' + tokens + '</td><td class="num">' + hit + '</td><td class="num">' + cost + '</td><td class="num">' + active + '</td></tr>').join('');
+write('sessions.html', page('会话明细',
+  tabsHtml('sessions') + filtersHtml('30d', null)
+  + '<div class="mca-body">' + card('会话明细', '6 个独立会话；主会话与子会话按各自日志逐行', '<div class="mca-session-tools"><select class="mca-session-select" aria-label="筛选供应商"><option>全部供应商</option></select><select class="mca-session-select" aria-label="筛选工作区"><option>全部工作区</option></select><input class="mca-session-search" placeholder="搜索会话 / 工作区 / 供应商" aria-label="搜索会话"/><button class="mca-pill sm">导出 CSV</button></div>',
+    '<div class="mca-insight-note">显示 6 / 6 个会话 · 全部可滚动查看</div><div class="mca-session-scroll"><div class="mca-table-wrap"><table class="mca-table"><thead><tr>' + ['会话', '工作区', '供应商', '请求', 'Tokens ↓', '缓存命中', '预估费用', '最近活跃'].map((x) => '<th role="button" tabindex="0">' + x + '</th>').join('') + '</tr></thead><tbody>' + sessionRows + '</tbody></table></div></div>') + '</div>',
+  1240, 'mca-compare-page', 'height:calc(100vh - 36px)'));
 
 console.log('all pages written to', outDir);

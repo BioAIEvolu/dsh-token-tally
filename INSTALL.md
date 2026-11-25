@@ -58,7 +58,7 @@ provider,model,currency,input,output,cacheRead,cacheWrite
 
 ## 已知口径
 
-- 仅统计普通会话：子代理会话（裸 `<uuid>` 目录、header 带 `parentSession`/`delegationDepth`）不计入；
+- 默认纳入主会话与子代理会话（裸 `<uuid>` 目录、`parentSession`/`delegationDepth`），按各自日志折叠并跳过继承的父历史前缀；会话明细逐行显示，不合并为会话树；
 - 费用为估算（token × 本地价目表），不含折扣/赠送额度/税费，不代表账单；
 - 首次启动全量回填历史会话（本机 101 会话实测 ≈4 秒；更大库为分钟级，之后走增量 + 磁盘缓存）；
 - compaction（内部压缩调用）的 token 计入统计（多数参考实现漏计）。

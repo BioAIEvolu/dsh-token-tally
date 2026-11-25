@@ -198,8 +198,9 @@ export class RollupStore {
       const id = sanitizeId(f.sessionId);
       if (!id || this.excluded.has(id)) continue;
       this.knownIds.add(id);
-      const meta = statOf(f.file);
-      if (!meta) continue;
+      const stat = statOf(f.file);
+      if (!stat) continue;
+      const meta = { ...stat, workspace: f.workspace };
       const cur = this.sessions.get(id);
       if (cur && cur.meta && cur.meta.file === meta.file && cur.meta.mtimeMs === meta.mtimeMs && cur.meta.size === meta.size) continue;
       this.pending.push({ id, file: f.file, meta });

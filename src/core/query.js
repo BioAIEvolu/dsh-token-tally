@@ -218,9 +218,14 @@ export function buildStacks(store, params = {}, pricer = null, nowSec = undefine
     if (!bucket) { bucket = new Map(); map.set(start, bucket); }
     const mk = provider + '\u0000' + model;
     let cell = bucket.get(mk);
-    if (!cell) { cell = { provider, model, count: 0, tokens: 0, cost: 0, priced: false, currency }; bucket.set(mk, cell); }
+    if (!cell) { cell = { provider, model, count: 0, tokens: 0, cost: 0, priced: false, currency, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheObservedTokens: 0, cacheHitRate: null }; bucket.set(mk, cell); }
     cell.count += b.count;
     cell.tokens += tokensOf(b);
+    cell.inputTokens += b.inputTokens;
+    cell.cacheReadTokens += b.cacheReadTokens;
+    cell.cacheWriteTokens += b.cacheWriteTokens;
+    cell.cacheObservedTokens += b.cacheObservedTokens;
+    cell.cacheHitRate = cell.cacheObservedTokens > 0 ? cell.cacheReadTokens / cell.cacheObservedTokens : null;
     const est = costOfBucket(b, pricer, provider, model);
     if (est.priced) { cell.cost += est.amount; cell.priced = true; cell.currency = est.currency; }
   }
@@ -319,4 +324,179 @@ export function buildModels(store, params = {}, nowSec = undefined) {
   const models = [...vendors.entries()].map(([provider, set]) => ({ provider, models: [...set].sort() }))
     .sort((a, b2) => a.provider.localeCompare(b2.provider));
   return { models };
+}
+
+function dailyUsage(rows, tz) {
+  const days = new Map();
+  for (const { provider, model, b } of rows) {
+    if (isCompactionRow(provider, model)) continue;
+    const day = alignStart(b.hour, 'day', tz | 0);
+    let d = days.get(day);
+    if (!d) {
+      d = { day, tokens: 0, requests: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheObservedTokens: 0 };
+      days.set(day, d);
+    }
+    d.tokens += tokensOf(b);
+    d.requests += b.count;
+    d.inputTokens += b.inputTokens;
+    d.outputTokens += b.outputTokens;
+    d.cacheReadTokens += b.cacheReadTokens;
+    d.cacheWriteTokens += b.cacheWriteTokens;
+    d.cacheObservedTokens += b.cacheObservedTokens;
+  }
+  return days;
+}
+
+function streakOf(activeDays, today) {
+  const active = new Set([...activeDays].filter(([, d]) => d.tokens > 0).map(([day]) => day));
+  let best = 0;
+  let run = 0;
+  let previous = null;
+  const ordered = [...active].sort((a, b) => a - b);
+  for (const day of ordered) {
+    run = previous != null && day - previous === DAY ? run + 1 : 1;
+    best = Math.max(best, run);
+    previous = day;
+  }
+  let current = 0;
+  for (let day = today; active.has(day); day -= DAY) current++;
+  return { current, best };
+}
+
+/** 用量洞察：活跃卡片 + 供应商拆分；所有数值直接来自现有小时桶，不引入内容估算。 */
+export function buildInsights(store, params = {}, pricer = null, nowSec = undefined) {
+  const now = Math.floor(nowSec ?? Date.now() / 1000);
+  const tz = params.tz | 0;
+  const { rows, fromTs, toTs } = iterBuckets(store, params, now);
+  const allRows = iterBuckets(store, { ...params, range: 'all', granularity: 'day' }, now).rows;
+  const selectedDays = dailyUsage(rows, tz);
+  const allDays = dailyUsage(allRows, tz);
+  const today = alignStart(now, 'day', tz);
+
+  const peak = [...selectedDays.values()].sort((a, b) => b.tokens - a.tokens)[0] || null;
+  const streak = streakOf(allDays, today);
+  const todayUsage = allDays.get(today) || null;
+  const todayCache = todayUsage ? cacheKpi(todayUsage) : { cacheHitRate: null, cacheCoverage: null };
+  const sumWindow = (from, to) => {
+    let tokens = 0;
+    for (const [day, d] of allDays) if (day >= from && day <= to) tokens += d.tokens;
+    return tokens;
+  };
+  const currentWeek = sumWindow(today - 6 * DAY, today);
+  const previousWeek = sumWindow(today - 13 * DAY, today - 7 * DAY);
+
+  const providers = new Map();
+  let totalTokens = 0;
+  for (const { provider, model, b } of rows) {
+    if (isCompactionRow(provider, model)) continue;
+    let p = providers.get(provider);
+    if (!p) {
+      p = { provider, tokens: 0, calls: 0, cost: 0, costPriced: false, currency: pricingCurrency(pricer), inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheObservedTokens: 0 };
+      providers.set(provider, p);
+    }
+    const tokens = tokensOf(b);
+    p.tokens += tokens;
+    p.calls += b.count;
+    p.inputTokens += b.inputTokens;
+    p.cacheReadTokens += b.cacheReadTokens;
+    p.cacheWriteTokens += b.cacheWriteTokens;
+    p.cacheObservedTokens += b.cacheObservedTokens;
+    totalTokens += tokens;
+    const est = costOfBucket(b, pricer, provider, model);
+    if (est.priced) { p.cost += est.amount; p.costPriced = true; p.currency = est.currency; }
+  }
+  const providerRows = [...providers.values()].map((p) => ({
+    provider: p.provider,
+    tokens: p.tokens,
+    calls: p.calls,
+    share: totalTokens > 0 ? p.tokens / totalTokens : 0,
+    cost: p.costPriced ? p.cost : null,
+    costPriced: p.costPriced,
+    currency: p.currency,
+    ...cacheKpi(p),
+  })).sort((a, b) => b.tokens - a.tokens);
+
+  return {
+    range: { fromTs, toTs },
+    currency: pricingCurrency(pricer),
+    cards: {
+      peakDay: peak ? { day: peak.day, tokens: peak.tokens } : null,
+      streak,
+      todayCache,
+      week: {
+        current: currentWeek,
+        previous: previousWeek,
+        delta: previousWeek > 0 ? (currentWeek - previousWeek) / previousWeek : null,
+      },
+    },
+    providers: providerRows,
+  };
+}
+
+/** 会话明细：每行是一份独立日志；不虚构 parentSession 树，也不把子会话重复并入父行。 */
+export function buildSessions(store, params = {}, pricer = null, nowSec = undefined) {
+  const { fromTs, toTs, tz } = resolveRange(params, nowSec);
+  const sets = makeSets(params);
+  const sessions = [];
+  for (const [sessionId, entry] of store.sessions) {
+    if (!entry || !entry.meta || !entry.state) continue;
+    const total = {
+      requests: 0, okCount: 0, failCount: 0, tokens: 0,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheObservedTokens: 0,
+      cost: 0, costPriced: false, currency: pricingCurrency(pricer),
+      firstActive: null, lastActive: null,
+    };
+    const providers = new Set();
+    for (const key of Object.keys(entry.state)) {
+      const b = entry.state[key];
+      if (b.hour < fromTs || b.hour > toTs) continue;
+      const { provider, model } = splitKey(key);
+      if (!matchRow(provider, model, sets) || isCompactionRow(provider, model)) continue;
+      total.requests += b.count;
+      total.okCount += b.okCount;
+      total.failCount += b.failCount;
+      total.tokens += tokensOf(b);
+      total.inputTokens += b.inputTokens;
+      total.outputTokens += b.outputTokens;
+      total.cacheReadTokens += b.cacheReadTokens;
+      total.cacheWriteTokens += b.cacheWriteTokens;
+      total.cacheObservedTokens += b.cacheObservedTokens;
+      total.firstActive = total.firstActive == null ? b.hour : Math.min(total.firstActive, b.hour);
+      total.lastActive = total.lastActive == null ? b.hour : Math.max(total.lastActive, b.hour);
+      providers.add(provider);
+      const est = costOfBucket(b, pricer, provider, model);
+      if (est.priced) { total.cost += est.amount; total.costPriced = true; total.currency = est.currency; }
+    }
+    if (!total.requests && !total.tokens) continue;
+    sessions.push({
+      sessionId,
+      workspace: entry.meta.workspace || null,
+      providers: [...providers].sort(),
+      ...total,
+      cost: total.costPriced ? total.cost : null,
+      ...cacheKpi(total),
+    });
+  }
+  sessions.sort((a, b) => b.tokens - a.tokens || (b.lastActive || 0) - (a.lastActive || 0));
+  const projectMap = new Map();
+  for (const s of sessions) {
+    const key = s.workspace || '未标记工作区';
+    let p = projectMap.get(key);
+    if (!p) { p = { workspace: key, sessions: 0, requests: 0, tokens: 0, cost: 0, costPriced: false, currency: pricingCurrency(pricer) }; projectMap.set(key, p); }
+    p.sessions++;
+    p.requests += s.requests;
+    p.tokens += s.tokens;
+    if (s.costPriced) { p.cost += s.cost || 0; p.costPriced = true; p.currency = s.currency; }
+  }
+  const totalTokens = sessions.reduce((sum, s) => sum + s.tokens, 0);
+  const projects = [...projectMap.values()].map((p) => ({ ...p, share: totalTokens > 0 ? p.tokens / totalTokens : 0, cost: p.costPriced ? p.cost : null }))
+    .sort((a, b) => b.tokens - a.tokens);
+  return {
+    range: { fromTs, toTs },
+    currency: pricingCurrency(pricer),
+    total: sessions.length,
+    truncated: false,
+    sessions,
+    projects,
+  };
 }

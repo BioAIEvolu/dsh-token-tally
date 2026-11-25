@@ -25,6 +25,12 @@ const checks = [
     points: await page.locator('.mca-anim-point').count(),
     svgs: await page.locator('svg.mca-svg').count(),
   })],
+  ['cache.html', async () => ({
+    lines: await page.locator('.mca-anim-line').count(),
+    points: await page.locator('.mca-anim-point').count(),
+    svgs: await page.locator('svg.mca-svg').count(),
+    emptyCells: await page.locator('.mca-empty').count(),
+  })],
   ['donut.html', async () => ({
     arcs: await page.locator('.mca-donut-arc').count(),
     pops: await page.locator('.mca-pop').count(),
@@ -38,6 +44,21 @@ const checks = [
     rows: await page.locator('.mca-cmp-row').count(),
     cols: await page.locator('.mca-table thead th').count(),
     emptyCells: await page.locator('.mca-empty').count(),
+    rootHeight: await page.locator('.mca-compare-page').evaluate((el) => el.getBoundingClientRect().height),
+    cardHeight: await page.locator('.mca-compare-page > .mca-body > .mca-card').evaluate((el) => el.getBoundingClientRect().height),
+    scrollHeight: await page.locator('.mca-compare-scroll').evaluate((el) => el.getBoundingClientRect().height),
+    scrollOverflow: await page.locator('.mca-compare-scroll').evaluate((el) => getComputedStyle(el).overflow),
+  })],
+  ['sessions.html', async () => ({
+    rows: await page.locator('.mca-table tbody tr').count(),
+    cols: await page.locator('.mca-table thead th').count(),
+    emptyCells: await page.locator('.mca-empty').count(),
+    sessionIds: await page.locator('.mca-session-id').count(),
+    rootHeight: await page.locator('.mca-compare-page').evaluate((el) => el.getBoundingClientRect().height),
+    scrollHeight: await page.locator('.mca-session-scroll').evaluate((el) => el.getBoundingClientRect().height),
+    scrollOverflow: await page.locator('.mca-session-scroll').evaluate((el) => getComputedStyle(el).overflow),
+    providerFilter: await page.locator('select[aria-label="筛选供应商"]').count(),
+    workspaceFilter: await page.locator('select[aria-label="筛选工作区"]').count(),
   })],
 ];
 
@@ -48,6 +69,10 @@ for (const [file, fn] of checks) {
   const r = await fn();
   console.log(file, JSON.stringify(r));
   if (r.rows === 0 || r.svgs === 0 || (r.emptyCells ?? 0) > 0) fail++;
+  if (file === 'hero.html' && r.tabs !== 6) fail++;
+  if (file === 'cache.html' && (r.points < 100 || r.emptyCells > 0)) fail++;
+  if (file === 'sessions.html' && (r.rows !== 6 || r.cols !== 8 || r.sessionIds !== 6 || r.rootHeight < 700 || r.scrollHeight < 400 || r.scrollOverflow !== 'auto' || r.providerFilter !== 1 || r.workspaceFilter !== 1)) fail++;
+  if (file === 'compare.html' && (r.rootHeight < 700 || r.cardHeight < 500 || r.scrollHeight < 400 || r.scrollOverflow !== 'auto')) fail++;
 }
 await browser.close();
 console.log('page errors:', errors.length ? errors.slice(0, 4) : 'none');

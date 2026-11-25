@@ -29,6 +29,8 @@ function payload(overrides = {}) {
     usage: { kpi: { cost: 1, costPriced: true, currency: 'CNY', sessions: 1, requests: 1, totalTokens: 100, cacheHitRate: null, cacheCoverage: null }, dist: [{ provider: 'p', model: 'm', calls: 1, tokens: 100, cost: 1, priced: true, currency: 'CNY' }] },
     stacks: { buckets },
     compare: { models: [{ provider: 'p', model: 'm', calls: 1, ok: 1, failed: 0, totalTokens: 100, inputTokens: 60, outputTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 1, priced: true, currency: 'CNY' }] },
+    insights: { cards: { peakDay: { day: 1794000000, tokens: 100 }, streak: { current: 3, best: 5 }, todayCache: { cacheHitRate: 0.8, cacheCoverage: 1 }, week: { current: 700, previous: 350, delta: 1 } }, providers: [{ provider: 'p', tokens: 100, calls: 1, share: 1, cost: 1, costPriced: true, currency: 'CNY', cacheHitRate: 0.8, cacheCoverage: 1 }] },
+    sessions: { total: 1, truncated: false, sessions: [{ sessionId: 'session-demo', workspace: 'D:/demo/alpha', providers: ['p'], requests: 1, failCount: 0, tokens: 100, cost: 1, costPriced: true, currency: 'CNY', cacheHitRate: 0.8, lastActive: 1794000000 }], projects: [{ workspace: 'D:/demo/alpha', sessions: 1, requests: 1, tokens: 100, share: 1, cost: 1, costPriced: true, currency: 'CNY' }] },
     models: { models: [{ provider: 'p', models: ['m', 'shared'] }, { provider: 'q', models: ['shared'] }] },
     heatmap: { days: [] },
     pricing: { version: 1, currency: 'CNY', rows: [], defaults: [], source: 'builtin' },
@@ -190,6 +192,111 @@ test('App：100% 占比按钮已接线，失败态可手动重试', async (t) =>
   assert.equal(button(root, '占比').props['aria-pressed'], true);
   const chart = one(root, (n) => n.props && n.props.className === 'mca-unsafe mca-split-main mca-chart-wrap').props.dangerouslySetInnerHTML.__html;
   assert.ok(chart.includes('25%'));
+});
+
+test('App：活动视图并入消耗分布，排行支持供应商/项目维度，无独立洞察页', async (t) => {
+  const data = payload({ heatmap: { days: [{ day: 1794000000, tokens: 100 }, { day: 1794086400, tokens: 200 }] } });
+  const env = installGlobals(t);
+  globalThis.localStorage.setItem('mca.prefs.v1', JSON.stringify({ tab: 'insights' }));
+  const { App } = createUI(React, { call: async (path) => data[path] });
+  const root = await mount(t, env, h(App));
+  assert.equal(all(root, (n) => n.type === 'button' && textOf(n).trim() === '用量洞察').length, 0);
+  assert.ok(all(root, (n) => textOf(n).includes('连续活跃 3 天')).length > 0);
+  await act(async () => { button(root, '周').props.onClick(); });
+  assert.ok(all(root, (n) => n.props?.dangerouslySetInnerHTML?.__html.includes('mca-activity-entrance')).length > 0);
+  await act(async () => { button(root, '累计').props.onClick(); });
+  await act(async () => { button(root, '调用次数排行').props.onClick(); });
+  await act(async () => { button(root, '供应商').props.onClick(); });
+  assert.ok(all(root, (n) => textOf(n).includes('供应商调用排行')).length > 0);
+  await act(async () => { button(root, '项目').props.onClick(); });
+  assert.ok(all(root, (n) => textOf(n).includes('项目调用排行')).length > 0);
+  await act(async () => { button(root, '会话明细').props.onClick(); });
+  assert.ok(all(root, (n) => textOf(n).includes('session')).length > 0);
+  const search = one(root, (n) => n.type === 'input' && n.props['aria-label'] === '搜索会话');
+  await act(async () => { search.props.onChange({ target: { value: 'no-such-session' } }); });
+  assert.ok(all(root, (n) => textOf(n).includes('没有匹配当前筛选的会话')).length > 0);
+});
+
+test('App：缓存指标只在调用趋势生效，切页后回到 Token 口径', async (t) => {
+  const data = payload();
+  const env = installGlobals(t);
+  const { App } = createUI(React, { call: async (path) => data[path] });
+  const root = await mount(t, env, h(App));
+  await act(async () => { button(root, '调用趋势').props.onClick(); });
+  await act(async () => { button(root, '缓存').props.onClick(); });
+  assert.ok(button(root, '缓存').props.className.includes('on'));
+  await act(async () => { button(root, '消耗分布').props.onClick(); });
+  assert.ok(button(root, 'Token').props.className.includes('on'));
+});
+
+test('App：点击模型对比行生成规范筛选键，不让 NUL 被 HTML 替换成 U+FFFD 后清空全看板', async (t) => {
+  const data = payload();
+  const calls = [];
+  const api = { call: async (path, params) => { calls.push({ path, params }); return data[path]; } };
+  const env = installGlobals(t);
+  const { App } = createUI(React, api);
+  const root = await mount(t, env, h(App));
+  await act(async () => { button(root, '模型对比').props.onClick(); });
+  const compare = one(root, (n) => n.props && n.props.className === 'mca-unsafe mca-compare-scroll');
+  const row = {
+    dataset: { provider: 'p', model: 'm', modelKey: 'p\ufffdm' },
+  };
+  await act(async () => {
+    compare.props.onClick({ target: { closest: (selector) => selector === 'tr.mca-cmp-row' ? row : null } });
+  });
+  await flush();
+  const usage = calls.filter((c) => c.path === 'usage').at(-1);
+  assert.deepEqual(usage.params.modelKeys, ['p\0m']);
+  const table = one(root, (n) => n.props && n.props.className === 'mca-unsafe mca-compare-scroll').props.dangerouslySetInnerHTML.__html;
+  assert.ok(table.includes('mca-cmp-row'), '筛选后对比表仍显示当前模型行');
+  assert.ok(!table.includes('data-model-key'));
+  assert.equal(all(root, (n) => n.props && n.props['aria-label'] === '移除筛选 m').length, 1, '点击后显示模型筛选 chip');
+  await act(async () => {
+    const currentCompare = one(root, (n) => n.props && n.props.className === 'mca-unsafe mca-compare-scroll');
+    currentCompare.props.onClick({ target: { closest: (selector) => selector === 'tr.mca-cmp-row' ? row : null } });
+  });
+  await flush();
+  assert.equal(all(root, (n) => n.props && n.props['aria-label'] === '移除筛选 m').length, 0, '再次点击移除筛选 chip');
+  assert.ok(one(root, (n) => n.props && n.props.className === 'mca-unsafe mca-compare-scroll').props.dangerouslySetInnerHTML.__html.includes('mca-cmp-row'), '解除筛选后数据仍正常');
+});
+
+test('App：模型对比页使用视口自适应布局，切回其他页恢复自然高度', async (t) => {
+  const data = payload();
+  const env = installGlobals(t);
+  const { App } = createUI(React, { call: async (path) => data[path] });
+  const root = await mount(t, env, h(App));
+  assert.ok(!one(root, (n) => n.props.className?.split(' ').includes('mca-root')).props.className.includes('mca-compare-page'));
+  await act(async () => { button(root, '模型对比').props.onClick(); });
+  assert.ok(one(root, (n) => n.props.className?.split(' ').includes('mca-root')).props.className.includes('mca-compare-page'));
+  await act(async () => { button(root, '消耗分布').props.onClick(); });
+  assert.ok(!one(root, (n) => n.props.className?.split(' ').includes('mca-root')).props.className.includes('mca-compare-page'));
+});
+
+test('App：会话明细支持全高滚动、供应商/工作区筛选与列排序', async (t) => {
+  const rowA = { sessionId: 'session-a', workspace: 'D:/demo/alpha', providers: ['p'], requests: 1, failCount: 0, tokens: 100, cost: 1, costPriced: true, currency: 'CNY', cacheHitRate: 0.8, lastActive: 1794000000 };
+  const rowB = { sessionId: 'session-b', workspace: 'D:/demo/beta', providers: ['q'], requests: 2, failCount: 0, tokens: 300, cost: 3, costPriced: true, currency: 'CNY', cacheHitRate: 0.6, lastActive: 1794086400 };
+  const data = payload({ sessions: { total: 2, truncated: false, sessions: [rowA, rowB], projects: [] } });
+  const env = installGlobals(t);
+  const { App } = createUI(React, { call: async (path) => data[path] });
+  const root = await mount(t, env, h(App));
+  await act(async () => { button(root, '会话明细').props.onClick(); });
+  assert.ok(one(root, (n) => n.props.className?.split(' ').includes('mca-root')).props.className.includes('mca-compare-page'));
+  assert.ok(all(root, (n) => n.props.className === 'mca-session-scroll').length > 0);
+  assert.deepEqual(all(root, (n) => n.props.className === 'mca-session-row').map((n) => n.props['data-session-id']), ['session-b', 'session-a'], '默认 Tokens 降序');
+  const tokensHeader = all(root, (n) => n.type === 'th' && textOf(n).startsWith('Tokens'))[0];
+  await act(async () => { tokensHeader.props.onClick(); });
+  assert.deepEqual(all(root, (n) => n.props.className === 'mca-session-row').map((n) => n.props['data-session-id']), ['session-a', 'session-b'], '点击 Tokens 后切换升序');
+  const providerSelect = one(root, (n) => n.type === 'select' && n.props['aria-label'] === '筛选供应商');
+  await act(async () => { providerSelect.props.onChange({ target: { value: 'q' } }); });
+  assert.deepEqual(all(root, (n) => n.props.className === 'mca-session-row').map((n) => n.props['data-session-id']), ['session-b']);
+  const workspaceSelect = one(root, (n) => n.type === 'select' && n.props['aria-label'] === '筛选工作区');
+  await act(async () => { workspaceSelect.props.onChange({ target: { value: 'D:/demo/beta' } }); });
+  assert.deepEqual(all(root, (n) => n.props.className === 'mca-session-row').map((n) => n.props['data-session-id']), ['session-b']);
+  const search = one(root, (n) => n.type === 'input' && n.props['aria-label'] === '搜索会话');
+  await act(async () => { search.props.onChange({ target: { value: 'not-found' } }); });
+  assert.ok(all(root, (n) => textOf(n).includes('没有匹配当前筛选的会话')).length > 0);
+  await act(async () => { button(root, '消耗分布').props.onClick(); });
+  assert.ok(!one(root, (n) => n.props.className?.split(' ').includes('mca-root')).props.className.includes('mca-compare-page'));
 });
 
 test('错误边界：组件异常显示可见错误，重试后恢复', async (t) => {

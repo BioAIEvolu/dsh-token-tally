@@ -205,6 +205,7 @@ export function stackedBars(stacks, opts = {}) {
 
 /** 调用趋势：每模型折线 */
 export function trendLines(stacks, opts = {}) {
+  if ((opts.metric || 'count') === 'cache') return cacheHitLines(stacks, opts);
   if (!stacks.some((b) => b.cells && b.cells.length)) return emptyChart();
   const tz = opts.tz | 0;
   const metric = opts.metric || 'count';
@@ -255,6 +256,69 @@ export function trendLines(stacks, opts = {}) {
       }
     }
     li++;
+  }
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="mca-svg" role="img">' + body + xLabels(stacks, tz) + legend.svg + '</svg>';
+}
+
+/** 缓存命中率时间序列：折线按相邻实测插值贯穿全窗，圆点只标真实测量值。 */
+function cacheHitLines(stacks, opts = {}) {
+  if (!stacks.some((b) => b.cells && b.cells.length)) return emptyChart();
+  const tz = opts.tz | 0;
+  const color = makeColorizer(stacks.flatMap((b) => b.cells.map((c) => c.model)));
+  const models = new Map();
+  stacks.forEach((b, bi) => {
+    for (const c of b.cells) {
+      if (!models.has(c.model)) models.set(c.model, new Array(stacks.length).fill(null));
+      models.get(c.model)[bi] = c.cacheHitRate == null ? null : c.cacheHitRate * 100;
+    }
+  });
+  for (const [model, arr] of models) if (!arr.some((v) => v != null)) models.delete(model);
+  if (!models.size) return '<div class="mca-empty" role="status">当前范围暂无缓存遥测</div>';
+  const plotW = W - M.l - M.r;
+  const legend = buildLegend([...models.keys()].map((m) => [modelLabel(m), color(m)]));
+  const plotTop = M.t + legend.rows * LEGEND_ROW_H + 6;
+  const plotH = H - plotTop - M.b;
+  let body = '';
+  for (let g = 0; g <= 4; g++) {
+    const gy = plotTop + plotH - (g / 4) * plotH;
+    body += '<line x1="' + M.l + '" y1="' + gy + '" x2="' + (W - M.r) + '" y2="' + gy + '" class="mca-grid"/>';
+    body += '<text x="' + (M.l - 6) + '" y="' + (gy + 4) + '" text-anchor="end" class="mca-ax">' + (g * 25) + '%</text>';
+  }
+  for (const [model, measured] of models) {
+    const stroke = color(model);
+    // 中间缺桶按相邻实测线性插值；首尾的缺失段沿用最近实测值延伸。
+    // 插值只负责把线连起来，圆点仍只画 measured 非 null 的真实遥测，不把缺桶伪报成 0%。
+    const validIndexes = measured.map((v, i) => v == null ? -1 : i).filter((i) => i >= 0);
+    const first = validIndexes[0];
+    const last = validIndexes[validIndexes.length - 1];
+    const continuous = measured.map((value, i) => {
+      if (value != null) return value;
+      if (i < first) return measured[first];
+      if (i > last) return measured[last];
+      let prev = i - 1;
+      while (prev >= 0 && measured[prev] == null) prev--;
+      let next = i + 1;
+      while (next < measured.length && measured[next] == null) next++;
+      if (prev < 0 || next >= measured.length) return measured[first];
+      const ratio = (i - prev) / (next - prev);
+      return measured[prev] + (measured[next] - measured[prev]) * ratio;
+    });
+    const points = continuous.map((value, bi) => ({
+      pi: bi,
+      measured: measured[bi] != null,
+      x: M.l + ((bi + 0.5) / Math.max(1, stacks.length)) * plotW,
+      y: plotTop + plotH - (value / 100) * plotH,
+    }));
+    const coords = points.map((p) => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+    if (points.length > 1) {
+      body += '<polyline class="mca-anim-line" pathLength="100" fill="none" style="stroke:' + stroke + '" points="' + coords + '"/>';
+      body += '<polyline class="mca-line-hit" fill="none" stroke="transparent" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" points="' + coords + '"><title>' + esc(modelLabel(model)) + ' · 折线含插值，圆点为实测</title></polyline>';
+    }
+    for (const p of points) {
+      if (!p.measured) continue;
+      const delay = points.length > 1 ? Math.round((p.pi / (points.length - 1)) * 900) : 0;
+      body += '<circle class="mca-anim-point" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="2.5" style="fill:' + stroke + ';animation-delay:' + delay + 'ms"><title>' + esc(modelLabel(model)) + ' · ' + esc(fmtPct(measured[p.pi] / 100)) + '（实测）</title></circle>';
+    }
   }
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="mca-svg" role="img">' + body + xLabels(stacks, tz) + legend.svg + '</svg>';
 }
@@ -438,7 +502,7 @@ export function rankingBars(rows, opts = {}) {
   const fmt = (v) => (metric === 'tokens' ? fmtTokens(v) : metric === 'cost' ? fmtCost(v, currency) : fmtInt(v));
   const sorted = [...rows].sort((a, b2) => val(b2) - val(a)).slice(0, 12);
   const color = makeColorizer(sorted.map((r) => r.model));
-  const legendItems = sorted.map((r) => [modelLabel((r.provider ? r.provider + '/' : '') + r.model), color(r.model)]);
+  const legendItems = sorted.map((r) => [modelLabel(r.displayName || ((r.provider ? r.provider + '/' : '') + r.model)), color(r.model)]);
 
   const W4 = 920;
   const top = 26; const plotH = 200; const left = 56; const right = 16;
@@ -469,10 +533,11 @@ export function rankingBars(rows, opts = {}) {
     const v = val(r);
     const h = Math.max(1, (v / yMax) * plotH);
     const x = left + (i + 0.5) * slot - barW / 2;
-    const name = modelLabel((r.provider ? r.provider + '/' : '') + r.model);
+    const name = modelLabel(r.displayName || ((r.provider ? r.provider + '/' : '') + r.model));
+    const fullName = r.fullName || name;
     const fill = color(r.model);
     const y = baseline - h;
-    bars += '<g class="' + animClass('bar', i) + '"><rect class="mca-bar-seg" data-provider="' + esc(r.provider) + '" data-model="' + esc(r.model) + '" tabindex="0" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" style="fill:' + fill + '"><title>' + esc(name) + ' · ' + esc(fmt(v)) + '</title></rect></g>';
+    bars += '<g class="' + animClass('bar', i) + '"><rect class="mca-bar-seg" data-provider="' + esc(r.provider) + '" data-model="' + esc(r.model) + '" tabindex="0" x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" style="fill:' + fill + '"><title>' + esc(fullName) + ' · ' + esc(fmt(v)) + '</title></rect></g>';
   });
 
   return '<svg viewBox="0 0 ' + W4 + ' ' + H4 + '" class="mca-svg mca-rank-svg" role="img">' + grid + bars + legend.svg + '</svg>';
@@ -533,8 +598,8 @@ export function calendarHeatmap(days, opts = {}) {
     if (!ROW_LABELS[r]) continue;
     rowLabels += '<text x="' + (X0 - LABEL_GAP) + '" y="' + (Y0 + r * (CS + GAP) + CS - 1) + '" text-anchor="end" class="mca-heat-day-label">' + ROW_LABELS[r] + '</text>';
   }
-  // 月标签：按本地日期检测月份切换，历史月份不会被隐藏。
-  let months = '';
+  // 月标签：按本地日期检测月份切换；相邻月标签过近时跳过后者，避免首尾「11月12月」叠字。
+  const monthLabels = [];
   let lastMonthKey = '';
   for (let col = 0; col < cols; col++) {
     const day = startDay + col * 7 * DAY;
@@ -542,10 +607,15 @@ export function calendarHeatmap(days, opts = {}) {
     const date = new Date(local * 1000);
     const key = date.getUTCFullYear() + '-' + date.getUTCMonth();
     if (key !== lastMonthKey) {
-      months += '<text x="' + (X0 + col * (CS + GAP)) + '" y="' + (Y0 - 14) + '" class="mca-heat-month-label">' + (date.getUTCMonth() + 1) + '月</text>';
+      const x = X0 + col * (CS + GAP);
+      const text = (date.getUTCMonth() + 1) + '月';
+      const width = text.length * 12;
+      const previous = monthLabels[monthLabels.length - 1];
+      if (!previous || x >= previous.x + previous.width + 6) monthLabels.push({ x, text, width });
       lastMonthKey = key;
     }
   }
+  const months = monthLabels.map((m) => '<text x="' + m.x + '" y="' + (Y0 - 14) + '" class="mca-heat-month-label">' + m.text + '</text>').join('');
   // 图例贴住网格左下角、与首列单元格对齐，视觉上属于图表本体，而不是浮在右下角。
   return '<svg viewBox="0 0 ' + W2 + ' ' + H2 + '" class="mca-svg" role="img">' +
     '<g>' + months + '</g>' + rowLabels + '<g class="mca-heat-entrance">' + cells + '</g>' +
@@ -553,6 +623,68 @@ export function calendarHeatmap(days, opts = {}) {
     '<text x="0" y="10" class="mca-heat-legend-label">少</text>' +
     [0, 1, 2, 3, 4].map((i) => '<rect x="' + (22 + i * (CS + GAP)) + '" y="0" width="' + CS + '" height="' + CS + '" rx="2" class="mca-h' + i + '"/>').join('') +
     '<text x="' + (22 + 5 * (CS + GAP) + 2) + '" y="10" class="mca-heat-legend-label">多</text></g></svg>';
+}
+
+/** 用量活动：周聚合柱 / 累计曲线。整组一次入场，不逐柱/逐点动画。 */
+export function activityTrend(days, opts = {}) {
+  const mode = opts.mode === 'cumulative' ? 'cumulative' : 'week';
+  const tz = opts.tz | 0;
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const sorted = [...(days || [])].filter((d) => d && Number.isFinite(d.day)).sort((a, b) => a.day - b.day);
+  if (!sorted.length) return emptyChart();
+  const DAY = 86400;
+  let points;
+  if (mode === 'week') {
+    const weeks = new Map();
+    for (const d of sorted) {
+      const week = alignWeekStart(d.day, tz);
+      weeks.set(week, (weeks.get(week) || 0) + (d.tokens || 0));
+    }
+    const last = alignWeekStart(now, tz);
+    const first = Math.max(Math.min(...weeks.keys()), last - 52 * 7 * DAY);
+    points = [];
+    for (let week = first; week <= last; week += 7 * DAY) points.push({ start: week, value: weeks.get(week) || 0 });
+  } else {
+    let running = 0;
+    points = sorted.map((d) => { running += d.tokens || 0; return { start: d.day, value: running }; });
+  }
+  if (!points.length) return emptyChart();
+
+  const W5 = 920; const H5 = 280;
+  const left = 64; const right = 18; const top = 24; const bottom = 42;
+  const plotW = W5 - left - right; const plotH = H5 - top - bottom;
+  const yMax = niceMax(Math.max(1, ...points.map((p) => p.value)));
+  let body = '';
+  for (let g = 0; g <= 4; g++) {
+    const y = top + plotH - (g / 4) * plotH;
+    body += '<line x1="' + left + '" y1="' + y + '" x2="' + (W5 - right) + '" y2="' + y + '" class="mca-grid"/>';
+    body += '<text x="' + (left - 8) + '" y="' + (y + 4) + '" text-anchor="end" class="mca-ax">' + esc(fmtAxis((g / 4) * yMax, 'tokens', 'CNY')) + '</text>';
+  }
+  const xAt = (i) => left + ((i + 0.5) / points.length) * plotW;
+  if (mode === 'week') {
+    const slot = plotW / points.length;
+    const barW = Math.max(3, Math.min(22, slot * 0.68));
+    let bars = '';
+    points.forEach((p, i) => {
+      const height = Math.max(p.value > 0 ? 1 : 0, (p.value / yMax) * plotH);
+      const x = xAt(i) - barW / 2;
+      const y = top + plotH - height;
+      bars += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + height.toFixed(1) + '" rx="2" fill="' + modelColor(0) + '"><title>' + esc(fmtDay(p.start, 'day', tz)) + ' 起的一周 · ' + esc(fmtTokens(p.value)) + ' tokens</title></rect>';
+    });
+    body += '<g class="mca-activity-entrance">' + bars + '</g>';
+  } else {
+    const coords = points.map((p, i) => [xAt(i), top + plotH - (p.value / yMax) * plotH]);
+    const line = coords.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    const area = left + ',' + (top + plotH) + ' ' + line + ' ' + (W5 - right) + ',' + (top + plotH);
+    body += '<g class="mca-activity-entrance"><polygon points="' + area + '" fill="' + modelColor(0) + '" opacity=".12"/>'
+      + '<polyline points="' + line + '" fill="none" stroke="' + modelColor(0) + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></g>';
+  }
+  const labelIndexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+  for (const i of labelIndexes) {
+    const p = points[i];
+    body += '<text x="' + xAt(i).toFixed(1) + '" y="' + (H5 - 14) + '" text-anchor="middle" class="mca-ax">' + esc(fmtDay(p.start, 'day', tz)) + '</text>';
+  }
+  return '<svg viewBox="0 0 ' + W5 + ' ' + H5 + '" class="mca-svg" role="img">' + body + '</svg>';
 }
 
 /** 模型对比表（列排序由调用方 ui 处理；此处输出行数据已排序） */
@@ -578,7 +710,8 @@ export function compareTable(models, opts = {}) {
   }
   let body = '';
   for (const m of models) {
-    body += '<tr class="mca-cmp-row" data-model="' + esc(m.model) + '" data-provider="' + esc(m.provider) + '" data-model-key="' + esc(m.provider + '\u0000' + m.model) + '" tabindex="0" role="button">';
+    // provider/model 分开存放；不要把 NUL 分隔的 modelKey 放进 HTML 属性（解析器会把它改成 U+FFFD）。
+    body += '<tr class="mca-cmp-row" data-model="' + esc(m.model) + '" data-provider="' + esc(m.provider) + '" tabindex="0" role="button">';
     for (const c of cols) body += '<td class="' + (c.num ? 'num' : '') + '"' + (c.titleFn ? ' title="' + c.titleFn(m) + '"' : '') + '>' + c.render(m) + '</td>';
     body += '</tr>';
   }

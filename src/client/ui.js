@@ -1,7 +1,7 @@
 // UI 装配（React 契约层）：createUI(React, api) → { App }
 // 构建时与 format/charts/index 合并为单文件 client 产物，import/export 会被剥离
 import { esc, fmtInt, fmtTokens, fmtCost, fmtPct, fmtDay, displayModelName, csvCell } from './format.js';
-import { stackedBars, trendLines, donut, rankingBars, calendarHeatmap, compareTable } from './charts.js';
+import { stackedBars, trendLines, donut, rankingBars, calendarHeatmap, activityTrend, compareTable } from './charts.js';
 
 const TABS = [
   { key: 'stacks', label: '消耗分布' },
@@ -9,6 +9,7 @@ const TABS = [
   { key: 'dist', label: '调用次数分布' },
   { key: 'rank', label: '调用次数排行' },
   { key: 'compare', label: '模型对比' },
+  { key: 'sessions', label: '会话明细' },
 ];
 const RANGES = [
   { key: 'today', label: '今天' },
@@ -66,6 +67,12 @@ function loadPrefs() {
   } catch { return {}; }
 }
 function savePrefs(p) { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+function normalizeModelKey(key) { return String(key ?? '').replace(/\uFFFD/g, '\u0000'); }
+function shortWorkspace(value) {
+  const text = String(value || '未标记工作区');
+  const parts = text.split(/[\\/]+/).filter(Boolean);
+  return parts.length <= 2 ? parts.join('/') : '…/' + parts.slice(-2).join('/');
+}
 
 export function createUI(React, api) {
   const h = React.createElement;
@@ -82,8 +89,8 @@ export function createUI(React, api) {
         custom: p.custom || { from: Math.floor(Date.now() / 1000) - 30 * 86400, to: Math.floor(Date.now() / 1000) },
         modelKeys: Array.isArray(p.modelKeys) ? p.modelKeys : [],
         providers: Array.isArray(p.providers) ? p.providers : [],
-        tab: p.tab || 'stacks',
-        metric: p.metric || 'tokens',
+        tab: TABS.some((t) => t.key === p.tab) ? p.tab : 'stacks',
+        metric: p.metric === 'cache' && (p.tab || 'stacks') !== 'trend' ? 'tokens' : (p.metric || 'tokens'),
         percentMode: !!p.percentMode,
       };
     }
@@ -98,12 +105,19 @@ export function createUI(React, api) {
     // null = 跟随最新时间窗口；用户滚轮浏览后保存明确偏移。
     const [chartWindow, setChartWindow] = useState(null);
     const [sort, setSort] = useState({ key: 'cost', dir: 'desc' });
+    const [activityMode, setActivityMode] = useState('daily');
+    const [rankDimension, setRankDimension] = useState('model');
+    const [sessionSearch, setSessionSearch] = useState('');
+    const [sessionProvider, setSessionProvider] = useState('');
+    const [sessionWorkspace, setSessionWorkspace] = useState('');
+    const [sessionSort, setSessionSort] = useState({ key: 'tokens', dir: 'desc' });
     const [showPricing, setShowPricing] = useState(false);
     const [pricing, setPricing] = useState(null);
     const [pricingDraft, setPricingDraft] = useState(null);
     const [pricingStatus, setPricingStatus] = useState('');
     const [pricingSearch, setPricingSearch] = useState('');
     const pricingFileRef = useRef(null);
+    const rootRef = useRef(null);
     const pricingDialogRef = useRef(null);
     const pricingCloseRef = useRef(null);
     const [data, setData] = useState(null);
@@ -191,12 +205,14 @@ export function createUI(React, api) {
         request('usage', summaryParams, silent),
         request('stacks', current, silent),
         request('compare', summaryParams, silent),
+        request('insights', summaryParams, silent),
+        request('sessions', summaryParams, silent),
         request('models', metaParams, silent),
         request('heatmap', heatParams, silent, [current.tz, Math.floor((now + current.tz) / 86400), current.modelKeys, current.providers]),
       ]).then(results => {
         if (seq !== loadSeq.current) return;
-        const keys = ['usage', 'stacks', 'compare', 'modelsMeta', 'heatmap'];
-        const labels = ['总览', '趋势数据', '模型对比', '筛选列表', '热力图'];
+        const keys = ['usage', 'stacks', 'compare', 'insights', 'sessions', 'modelsMeta', 'heatmap'];
+        const labels = ['总览', '趋势数据', '模型对比', '活跃摘要', '会话明细', '筛选列表', '热力图'];
         const snapshot = {};
         const failures = [];
         results.forEach((result, i) => {
@@ -269,9 +285,35 @@ export function createUI(React, api) {
         previous?.focus?.();
       };
     }, [showPricing]);
+    useEffect(() => {
+      const el = rootRef.current;
+      if (!el || !el.style || typeof window === 'undefined') return undefined;
+      if (tab !== 'compare' && tab !== 'sessions') { el.style.height = ''; return undefined; }
+      // 对比页按根节点到视口底部的真实距离占满剩余高度；其他页签保持自然文档流。
+      const fit = () => {
+        const viewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+        const top = el.getBoundingClientRect().top;
+        el.style.height = Math.max(320, Math.floor(viewportHeight - top - 16)) + 'px';
+      };
+      fit();
+      const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+      if (observer && el.parentElement) observer.observe(el.parentElement);
+      window.addEventListener('resize', fit);
+      if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+      return () => {
+        if (observer) observer.disconnect();
+        window.removeEventListener('resize', fit);
+        if (window.visualViewport) window.visualViewport.removeEventListener('resize', fit);
+        el.style.height = '';
+      };
+    }, [tab, modelKeys, providers]);
 
     const toggleModel = (key) => {
-      setModelKeys((current) => current.includes(key) ? current.filter((m) => m !== key) : current.concat([key]));
+      const normalized = normalizeModelKey(key);
+      setModelKeys((current) => {
+        const keys = current.map(normalizeModelKey);
+        return keys.includes(normalized) ? keys.filter((m) => m !== normalized) : keys.concat([normalized]);
+      });
     };
     const toggleProvider = (provider) => {
       setProviders((current) => current.includes(provider) ? current.filter((p) => p !== provider) : current.concat([provider]));
@@ -325,7 +367,11 @@ export function createUI(React, api) {
     ) : null;
     const sortBy = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
     const activateCompareRow = (tr) => {
-      if (tr && tr.dataset && tr.dataset.modelKey) toggleModel(tr.dataset.modelKey);
+      if (!tr || !tr.dataset || !tr.dataset.model) return;
+      const provider = tr.dataset.provider || '';
+      const model = tr.dataset.model;
+      // 与图表点击共用即时拼接逻辑；不读取可能被 HTML 规范化为 U+FFFD 的 data-model-key。
+      toggleModel(provider ? provider + '\u0000' + model : model);
     };
     const onCompareKeyDown = (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -348,6 +394,30 @@ export function createUI(React, api) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url; a.download = 'token-tally-compare.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    };
+
+    const downloadSessions = () => {
+      if (typeof document === 'undefined' || typeof URL === 'undefined') return;
+      const rows = (data && data.sessions && data.sessions.sessions) || [];
+      const columns = [
+        ['sessionId', 'Session ID'], ['workspace', '工作区'], ['providers', '供应商'],
+        ['requests', '请求数'], ['totalTokens', 'Tokens'], ['cacheHitRate', '缓存命中率'],
+        ['cost', '预估费用'], ['currency', '币种'], ['lastActive', '最近活跃桶'],
+      ];
+      const lines = [columns.map(([, label]) => csvCell(label)).join(',')];
+      for (const row of rows) {
+        lines.push(columns.map(([key]) => {
+          if (key === 'providers') return csvCell((row.providers || []).join(' / '));
+          if (key === 'totalTokens') return csvCell(row.tokens);
+          return csvCell(row[key]);
+        }).join(','));
+      }
+      const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'token-tally-sessions.csv';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     };
@@ -451,10 +521,13 @@ export function createUI(React, api) {
 
     const kpi = u ? h('div', { className: 'mca-kpis' },
       kpiCard('预估费用', u.kpi.cost == null ? '未配置' : fmtCost(u.kpi.cost, u.kpi.currency || currency), u.kpi.costPriced ? '' : 'mca-dim', anyUnpriced ? '部分模型未配置价格' : null),
-      kpiCard('会话数', fmtInt(u.kpi.sessions ?? 0)),
-      kpiCard('用量请求', fmtInt(u.kpi.requests)),
       kpiCard('计费 Tokens', fmtTokens(u.kpi.totalTokens)),
+      kpiCard('输入 Tokens', fmtTokens(u.kpi.inputTokens)),
+      kpiCard('输出 Tokens', fmtTokens(u.kpi.outputTokens)),
+      kpiCard('缓存 Tokens', fmtTokens((u.kpi.cacheReadTokens || 0) + (u.kpi.cacheWriteTokens || 0)), '', '读 ' + fmtTokens(u.kpi.cacheReadTokens) + ' · 写 ' + fmtTokens(u.kpi.cacheWriteTokens)),
       kpiCard('缓存命中率', fmtPct(u.kpi.cacheHitRate), '', u.kpi.cacheCoverage != null ? '遥测覆盖 ' + fmtPct(u.kpi.cacheCoverage) : null),
+      kpiCard('用量请求', fmtInt(u.kpi.requests)),
+      kpiCard('会话数', fmtInt(u.kpi.sessions ?? 0)),
     ) : (error ? h('div', { className: 'mca-kpis mca-kpis-placeholder' }, h('div', { className: 'mca-empty' }, '数据加载失败')) : h('div', { className: 'mca-kpis' }, [0, 1, 2, 3, 4].map((i) => h('div', { key: i, className: 'mca-kpi mca-kpi-skeleton' },
       h('div', { className: 'mca-skeleton mca-skeleton-label' }),
       h('div', { className: 'mca-skeleton mca-skeleton-value' }),
@@ -462,14 +535,17 @@ export function createUI(React, api) {
 
     const tabNav = h('div', { className: 'mca-tabs', role: 'tablist' }, TABS.map((t) => h('button', {
       key: t.key, role: 'tab', 'aria-selected': tab === t.key,
-      className: 'mca-tab' + (tab === t.key ? ' on' : ''), onClick: () => setTab(t.key),
+      className: 'mca-tab' + (tab === t.key ? ' on' : ''), onClick: () => { setTab(t.key); if (t.key !== 'trend' && metric === 'cache') setMetric('tokens'); },
     }, t.label)));
 
     // 口径切换做成一个分段控件，视觉上与筛选栏区分
-    const metricPills = (k) => h('div', { className: 'mca-seg mca-seg-sm' },
-      [['tokens', 'Token'], ['cost', '费用'], ['count', '次数']].map(([key, label]) => h('button', {
+    const metricPills = (k) => {
+      const choices = [['tokens', 'Token'], ['cost', '费用'], ['count', '次数']];
+      if (k === 'trend') choices.push(['cache', '缓存']);
+      return h('div', { className: 'mca-seg mca-seg-sm' }, choices.map(([key, label]) => h('button', {
         key, className: 'mca-seg-btn' + (metric === key ? ' on' : ''), onClick: () => { setMetric(key); if (k) setTab(k); },
       }, label)));
+    };
 
     let body = null;
     if (error && !data) {
@@ -502,7 +578,7 @@ export function createUI(React, api) {
         h('div', { className: 'mca-card-head' },
           h('div', { className: 'mca-card-title-wrap' },
             h('span', { className: 'mca-card-title' }, '调用趋势'),
-            rangeLabel ? h('span', { className: 'mca-card-sub' }, rangeLabel) : null,
+            rangeLabel ? h('span', { className: 'mca-card-sub' }, rangeLabel + (metric === 'cache' ? ' · 折线含插值，圆点为实测' : '')) : null,
           ),
           h('div', { className: 'mca-card-tools' }, chartNav, metricPills('trend')),
         ),
@@ -520,17 +596,103 @@ export function createUI(React, api) {
         h('div', { key: ringClockKey, className: 'mca-donut-grow mca-unsafe', style: { '--progress': 1 }, onClick: onChartPick, dangerouslySetInnerHTML: { __html: donut(dist, { metric, currency, externalClock: true }) } }),
       );
     } else if (tab === 'rank') {
-      // 排行榜与总额同口径：排除 internal/(compaction) 内部压缩台账行（compare 表仍保留该行）
-      const ranked = cmp.filter((m) => !(m.provider === 'internal' || m.model === '(compaction)'));
+      // 排行统一承载模型 / 供应商 / 项目三个维度，不再额外开一张供应商/项目表。
+      const ranked = rankDimension === 'provider'
+        ? ((data && data.insights && data.insights.providers) || []).map((p) => ({
+          provider: '', model: p.provider, calls: p.calls, totalTokens: p.tokens,
+          cost: p.cost, priced: p.costPriced, currency: p.currency,
+        }))
+        : rankDimension === 'project'
+          ? ((data && data.sessions && data.sessions.projects) || []).map((p) => ({
+            provider: '', model: p.workspace, displayName: shortWorkspace(p.workspace), fullName: p.workspace,
+            calls: p.requests, totalTokens: p.tokens, cost: p.cost, priced: p.costPriced, currency: p.currency,
+          }))
+          : cmp.filter((m) => !(m.provider === 'internal' || m.model === '(compaction)'));
+      const dimensionTitle = rankDimension === 'provider' ? '供应商调用排行' : rankDimension === 'project' ? '项目调用排行' : '模型调用排行';
+      const dimensionSub = rankDimension === 'provider' ? '按供应商合并全部模型'
+        : rankDimension === 'project' ? '按会话工作区汇总'
+          : '总计 ' + fmtInt(ranked.reduce((s, m) => s + (m.calls || 0), 0)) + ' 次请求';
       body = h('div', { className: 'mca-card' },
         h('div', { className: 'mca-card-head' },
           h('div', { className: 'mca-card-title-wrap' },
-            h('span', { className: 'mca-card-title' }, '模型调用排行'),
-            h('span', { className: 'mca-card-sub' }, '总计 ' + fmtInt(ranked.reduce((s, m) => s + (m.calls || 0), 0)) + ' 次请求'),
+            h('span', { className: 'mca-card-title' }, dimensionTitle),
+            h('span', { className: 'mca-card-sub' }, dimensionSub),
           ),
-          h('div', { className: 'mca-card-tools' }, metricPills(null)),
+          h('div', { className: 'mca-card-tools' },
+            h('div', { className: 'mca-seg mca-seg-sm' }, [['model', '模型'], ['provider', '供应商'], ['project', '项目']].map(([key, label]) => h('button', {
+              key, className: 'mca-seg-btn' + (rankDimension === key ? ' on' : ''), onClick: () => setRankDimension(key), 'aria-pressed': rankDimension === key,
+            }, label))),
+            metricPills(null),
+          ),
         ),
-        h('div', { className: 'mca-unsafe', onClick: onChartPick, dangerouslySetInnerHTML: { __html: rankingBars(ranked, { metric, currency }) } }),
+        h('div', { className: 'mca-unsafe', onClick: rankDimension === 'model' ? onChartPick : undefined, dangerouslySetInnerHTML: { __html: rankingBars(ranked, { metric, currency }) } }),
+      );
+    } else if (tab === 'sessions') {
+      const info = data && data.sessions;
+      const rows = (info && info.sessions) || [];
+      const providerOptions = [...new Set(rows.flatMap((r) => r.providers || []))].sort((a, b) => a.localeCompare(b));
+      const workspaceOptions = [...new Set(rows.map((r) => r.workspace || '未标记工作区'))].sort((a, b) => a.localeCompare(b));
+      const needle = sessionSearch.trim().toLowerCase();
+      const filtered = rows.filter((r) => {
+        if (sessionProvider && !(r.providers || []).includes(sessionProvider)) return false;
+        if (sessionWorkspace && (r.workspace || '未标记工作区') !== sessionWorkspace) return false;
+        return !needle || String(r.sessionId).toLowerCase().includes(needle) || String(r.workspace || '').toLowerCase().includes(needle) || (r.providers || []).join(' ').toLowerCase().includes(needle);
+      });
+      const sortSessionsBy = (key) => setSessionSort((current) => ({ key, dir: current.key === key && current.dir === 'desc' ? 'asc' : 'desc' }));
+      const valueOf = (r, key) => {
+        if (key === 'sessionId' || key === 'workspace') return String(r[key] || '未标记工作区');
+        if (key === 'providers') return (r.providers || []).join(' / ');
+        if (key === 'cost') return r.costPriced ? r.cost : -1;
+        if (key === 'lastActive') return r.lastActive == null ? -1 : r.lastActive;
+        if (key === 'cacheHitRate') return r.cacheHitRate == null ? -1 : r.cacheHitRate;
+        return Number(r[key] || 0);
+      };
+      const visible = [...filtered].sort((a, b) => {
+        const va = valueOf(a, sessionSort.key); const vb = valueOf(b, sessionSort.key);
+        const dir = sessionSort.dir === 'desc' ? -1 : 1;
+        if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb)) * dir;
+        return (va - vb) * dir;
+      });
+      const headers = [
+        ['sessionId', '会话', false], ['workspace', '工作区', false], ['providers', '供应商', false],
+        ['requests', '请求', true], ['tokens', 'Tokens', true], ['cacheHitRate', '缓存命中', true],
+        ['cost', '预估费用', true], ['lastActive', '最近活跃', true],
+      ];
+      const sessionTh = (key, label, numeric) => h('th', {
+        key, className: numeric ? 'num' : '', role: 'button', tabIndex: 0,
+        'aria-sort': sessionSort.key === key ? (sessionSort.dir === 'desc' ? 'descending' : 'ascending') : 'none',
+        onClick: () => sortSessionsBy(key),
+        onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortSessionsBy(key); } },
+      }, label + (sessionSort.key === key ? (sessionSort.dir === 'desc' ? ' ↓' : ' ↑') : ''));
+      body = h('div', { className: 'mca-card' },
+        h('div', { className: 'mca-card-head' },
+          h('div', { className: 'mca-card-title-wrap' },
+            h('span', { className: 'mca-card-title' }, '会话明细'),
+            h('span', { className: 'mca-card-sub' }, fmtInt((info && info.total) || 0) + ' 个独立会话；主会话与子会话按各自日志逐行'),
+          ),
+          h('div', { className: 'mca-session-tools' },
+            h('select', { className: 'mca-session-select', value: sessionProvider, onChange: (e) => setSessionProvider(e.target.value), 'aria-label': '筛选供应商' },
+              h('option', { value: '' }, '全部供应商'), providerOptions.map((p) => h('option', { key: p, value: p }, p))),
+            h('select', { className: 'mca-session-select', value: sessionWorkspace, onChange: (e) => setSessionWorkspace(e.target.value), 'aria-label': '筛选工作区' },
+              h('option', { value: '' }, '全部工作区'), workspaceOptions.map((w) => h('option', { key: w, value: w }, w))),
+            h('input', { className: 'mca-session-search', value: sessionSearch, onChange: (e) => setSessionSearch(e.target.value), placeholder: '搜索会话 / 工作区 / 供应商', 'aria-label': '搜索会话' }),
+            h('button', { className: 'mca-pill sm', onClick: downloadSessions, disabled: !rows.length }, '导出 CSV'),
+          ),
+        ),
+        h('div', { className: 'mca-insight-note' }, '显示 ' + fmtInt(visible.length) + ' / ' + fmtInt(rows.length) + ' 个会话 · 全部可滚动查看'),
+        visible.length ? h('div', { className: 'mca-session-scroll' }, h('div', { className: 'mca-table-wrap' }, h('table', { className: 'mca-table' },
+          h('thead', null, h('tr', null, headers.map(([key, label, numeric]) => sessionTh(key, label, numeric)))),
+          h('tbody', null, visible.map((r) => h('tr', { key: r.sessionId, className: 'mca-session-row', 'data-session-id': r.sessionId },
+            h('td', { className: 'mca-session-id', title: r.sessionId }, String(r.sessionId).slice(0, 8)),
+            h('td', { title: r.workspace || '未标记工作区' }, h('span', { className: 'mca-ellipsis' }, r.workspace || '未标记')),
+            h('td', null, h('span', { className: 'mca-ellipsis', title: (r.providers || []).join(' / ') }, (r.providers || []).join(' / ') || '—')),
+            h('td', { className: 'num', title: '失败 ' + fmtInt(r.failCount || 0) }, fmtInt(r.requests)),
+            h('td', { className: 'num', title: fmtInt(r.tokens) }, fmtTokens(r.tokens)),
+            h('td', { className: 'num' }, fmtPct(r.cacheHitRate)),
+            h('td', { className: 'num' }, r.costPriced ? fmtCost(r.cost, r.currency || currency) : '未配置'),
+            h('td', { className: 'num' }, r.lastActive == null ? '—' : fmtDay(r.lastActive, 'hour', tz)),
+          ))),
+        ))) : h('div', { className: 'mca-empty' }, rows.length ? '没有匹配当前筛选的会话' : '当前范围暂无会话数据'),
       );
     } else {
       body = h('div', { className: 'mca-card' },
@@ -558,18 +720,33 @@ export function createUI(React, api) {
     }
 
     const heat = data && data.heatmap;
-    // 热力图只作为「消耗分布」页的补充视图；其它页签不渲染，避免与当前主题无关又挤占版面
+    const insightCards = (data && data.insights && data.insights.cards) || {};
+    const peak = insightCards.peakDay;
+    const streak = insightCards.streak || {};
+    const week = insightCards.week || {};
+    const summary = [
+      streak.current > 0 ? '连续活跃 ' + fmtInt(streak.current) + ' 天' : null,
+      peak ? '最高单日 ' + fmtTokens(peak.tokens) + '（' + fmtDay(peak.day, 'day', tz) + '）' : null,
+      week.delta != null ? '近 7 日 ' + (week.delta >= 0 ? '+' : '') + (week.delta * 100).toFixed(1) + '%' : null,
+    ].filter(Boolean).join(' · ');
+    // 活动视图只在「消耗分布」出现，日/周/累计共享同一组数据，不再重复开独立洞察页。
     const heatCard = tab === 'stacks' ? h('div', { className: 'mca-card' },
       h('div', { className: 'mca-card-head' },
         h('div', { className: 'mca-card-title-wrap' },
-          h('span', { className: 'mca-card-title' }, '用量热力图'),
-          h('span', { className: 'mca-card-sub' }, '最近 12 个月'),
+          h('span', { className: 'mca-card-title' }, '用量活动'),
+          h('span', { className: 'mca-card-sub' }, summary || '最近 12 个月'),
         ),
+        h('div', { className: 'mca-seg mca-seg-sm' }, [['daily', '日'], ['week', '周'], ['cumulative', '累计']].map(([key, label]) => h('button', {
+          key, className: 'mca-seg-btn' + (activityMode === key ? ' on' : ''), onClick: () => setActivityMode(key), 'aria-pressed': activityMode === key,
+        }, label))),
       ),
-      heat ? h('div', { className: 'mca-unsafe mca-heat-wrap', dangerouslySetInnerHTML: { __html: calendarHeatmap(heat.days, { tz, now: Math.floor(Date.now() / 1000) }) } }) : h('div', { className: 'mca-empty' }, error ? '暂时无法加载，请点击上方“重试”' : '加载中…'),
+      heat ? h('div', { className: 'mca-unsafe mca-heat-wrap', dangerouslySetInnerHTML: { __html: activityMode === 'daily'
+        ? calendarHeatmap(heat.days, { tz, now: Math.floor(Date.now() / 1000) })
+        : activityTrend(heat.days, { mode: activityMode, tz, now: Math.floor(Date.now() / 1000) }) } })
+        : h('div', { className: 'mca-empty' }, error ? '暂时无法加载，请点击上方“重试”' : '加载中…'),
     ) : null;
 
-    return h('div', { className: 'mca-root' },
+    return h('div', { ref: rootRef, className: 'mca-root' + (tab === 'compare' || tab === 'sessions' ? ' mca-compare-page' : '') },
       filterBar,
       chipRow,
       kpi,

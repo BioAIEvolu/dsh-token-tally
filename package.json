@@ -1,7 +1,7 @@
 {
   "name": "dsh-token-tally",
-  "version": "0.1.4",
-  "description": "Token 台账 — DeepSeek Harness (DSH) 用量与费用看板插件：模型×时间堆叠柱、折线趋势、环形分布、调用排行五页签消耗视图 + 多模型对比表 + 53 周热力图，本地聚合会话 Token 与预估费用，零第三方运行时依赖。/ Token & cost dashboard plugin for DeepSeek Harness: model-by-time stacked bars, trend lines, donut charts, rankings, a model comparison table and a 53-week heatmap — aggregated locally, zero third-party runtime deps.",
+  "version": "0.2.0",
+  "description": "Token 台账 — DeepSeek Harness (DSH) 用量与费用看板插件：六页签消耗视图、缓存命中趋势、日/周/累计活动、模型/供应商/项目多维排行、会话明细与模型对比，本地聚合 Token 和预估费用，零第三方运行时依赖。/ Token & cost dashboard for DeepSeek Harness: six usage views, cache-hit trends, daily/weekly/cumulative activity, model/provider/project rankings, per-session details and model comparison — aggregated locally, zero third-party runtime deps.",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -51,7 +51,8 @@
     "icon.svg",
     "README.md",
     "INSTALL.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "node": ">=18",

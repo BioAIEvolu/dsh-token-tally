@@ -375,7 +375,7 @@ test('query：compare / heatmap / models 载荷（含费用与速度）', async 
   }
 });
 
-test('host：装配注册 6 条路由并保持到卸载，loopback 拒绝 + 正常 payload + 实时事件不抛错', async () => {
+test('host：装配注册 10 条路由并保持到卸载，loopback 拒绝 + 正常 payload + 实时事件不抛错', async () => {
   const root = mkTemp();
   const cacheDir = mkTemp();
   writeSession(root, '--W--', 'session-abc', [
@@ -413,7 +413,7 @@ test('host：装配注册 6 条路由并保持到卸载，loopback 拒绝 + 正�
     },
   };
   hostApply(ctx, { cacheDir, backfillBudgetMs: 3000 });
-  assert.equal(routes.length, 8);
+  assert.equal(routes.length, 10);
   assert.equal(removedRoutes, 0, 'route disposers must not run during effect setup');
   assert.equal(cleanups.length, 2, 'timer and route cleanup are owned by Cordis effects');
 
@@ -452,5 +452,5 @@ test('host：装配注册 6 条路由并保持到卸载，loopback 拒绝 + 正�
   // Disposal is the only point at which routes disappear.
   for (const cleanup of [...cleanups].reverse()) cleanup();
   assert.equal(routes.length, 0);
-  assert.equal(removedRoutes, 8);
+  assert.equal(removedRoutes, 10);
 });

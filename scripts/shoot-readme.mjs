@@ -18,9 +18,11 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, dev
 const shots = [
   ['hero.html', 'hero.png'],
   ['trend.html', 'trend.png'],
+  ['cache.html', 'cache.png'],
   ['donut.html', 'donut.png'],
   ['rank.html', 'rank.png'],
   ['compare.html', 'compare.png'],
+  ['sessions.html', 'sessions.png'],
 ];
 
 for (const [src, dest] of shots) {

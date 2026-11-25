@@ -343,6 +343,17 @@ test('calendarHeatmap：历史日期网格与层级配色 + 月标签与星期�
   assert.ok(svg.includes('>周日<') && svg.includes('>周一<') && svg.includes('>周三<') && svg.includes('>周六<'), 'renders weekday labels');
 });
 
+test('calendarHeatmap：相邻月标签保持间距，不在年界处叠字', () => {
+  const svg = calendarHeatmap([{ day: now, tokens: 2e6 }], { now, tz: 0 });
+  const labels = [...svg.matchAll(/<text x="([\d.]+)" y="[\d.]+" class="mca-heat-month-label">([^<]+)<\/text>/g)]
+    .map((m) => ({ x: Number(m[1]), text: m[2] }));
+  assert.ok(labels.length > 2);
+  for (let i = 1; i < labels.length; i++) {
+    assert.ok(labels[i].x - labels[i - 1].x >= labels[i - 1].text.length * 12 + 4,
+      labels[i - 1].text + ' 与 ' + labels[i].text + ' 不应重叠');
+  }
+});
+
 test('alignWeekStart：周一为界', () => {
   const tz = 0;
   // 1794000000 对应的周起点应是周一 00:00 UTC
@@ -359,7 +370,10 @@ test('compareTable：列头/排序标记/转义/空态', () => {
   assert.ok(html.includes('data-sort="cost"'));
   assert.ok(html.includes('↓'));
   assert.ok(html.includes('mca-cmp-row'));
-  assert.ok(html.includes('data-model-key="a\u0000&lt;x&gt;&amp;"'));
+  assert.ok(html.includes('data-provider="a"'));
+  assert.ok(html.includes('data-model="&lt;x&gt;&amp;"'));
+  assert.ok(!html.includes('data-model-key'), '不把 NUL 筛选键放进 HTML 属性');
+  assert.ok(!html.includes('\u0000'), 'HTML 属性不含会被浏览器替换为 U+FFFD 的 NUL');
   assert.ok(html.includes('$0.50'));
   assert.ok(html.includes('$12.34/M'));
   assert.ok(!html.includes('¥'));
